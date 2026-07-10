@@ -12,54 +12,16 @@ agent against idle and rule-based-heuristic baselines on held-out seeds.
 import argparse
 from pathlib import Path
 
-import numpy as np
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.env_util import make_vec_env
 
 from energy_storage import BatteryArbitrageEnv, EnvConfig
+from energy_storage.baselines import evaluate, heuristic_policy, idle_policy
 
 
 def make_env_fn(episode_days: int):
     return lambda: BatteryArbitrageEnv(EnvConfig(episode_days=episode_days))
-
-
-def idle_policy(env, obs):
-    return np.array([0.0], dtype=np.float32)
-
-
-def heuristic_policy(env, obs):
-    """Charge in the overnight trough, discharge into the evening peak."""
-    hour = env._hour
-    if 1 <= hour <= 5:
-        return np.array([1.0], dtype=np.float32)
-    if 18 <= hour <= 21:
-        return np.array([-1.0], dtype=np.float32)
-    return np.array([0.0], dtype=np.float32)
-
-
-def evaluate(policy_fn, episode_days: int, episodes: int, seed0: int) -> dict:
-    env = BatteryArbitrageEnv(EnvConfig(episode_days=episode_days))
-    profits, degradations, rewards = [], [], []
-    for ep in range(episodes):
-        obs, _ = env.reset(seed=seed0 + ep)
-        profit = degradation = total_reward = 0.0
-        done = False
-        while not done:
-            obs, reward, terminated, truncated, info = env.step(policy_fn(env, obs))
-            profit += info["profit"]
-            degradation += info["degradation_cost"]
-            total_reward += reward
-            done = terminated or truncated
-        profits.append(profit)
-        degradations.append(degradation)
-        rewards.append(total_reward)
-    return {
-        "profit": float(np.mean(profits)),
-        "degradation": float(np.mean(degradations)),
-        "net": float(np.mean(profits) - np.mean(degradations)),
-        "reward": float(np.mean(rewards)),
-    }
 
 
 def main() -> None:
@@ -70,9 +32,21 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--eval-episodes", type=int, default=20)
     parser.add_argument("--models-dir", type=Path, default=Path("models"))
+    parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
 
     args.models_dir.mkdir(parents=True, exist_ok=True)
+
+    run = None
+    if args.wandb:
+        import wandb
+
+        run = wandb.init(
+            project="energy-storage",
+            job_type="train",
+            config={k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
+            sync_tensorboard=True,
+        )
 
     train_env = make_vec_env(make_env_fn(args.episode_days), n_envs=args.n_envs, seed=args.seed)
     eval_env = make_vec_env(make_env_fn(args.episode_days), n_envs=1, seed=args.seed + 10_000)
@@ -90,8 +64,14 @@ def main() -> None:
         seed=args.seed,
         verbose=1,
         learning_starts=2_000,
+        tensorboard_log=f"logs/{run.id}" if run else None,
     )
-    model.learn(total_timesteps=args.timesteps, callback=eval_callback, progress_bar=False)
+    callbacks = [eval_callback]
+    if run:
+        from wandb.integration.sb3 import WandbCallback
+
+        callbacks.append(WandbCallback(verbose=1))
+    model.learn(total_timesteps=args.timesteps, callback=callbacks, progress_bar=False)
     final_path = args.models_dir / "sac_final"
     model.save(final_path)
     print(f"\nSaved final model to {final_path}.zip")
@@ -106,12 +86,19 @@ def main() -> None:
     header = f"{'policy':<12} {'profit':>10} {'degradation':>12} {'net':>10} {'reward':>10}"
     print(header)
     print("-" * len(header))
+    eval_config = EnvConfig(episode_days=args.episode_days)
     for name, policy in [("idle", idle_policy), ("heuristic", heuristic_policy), ("sac", sac_policy)]:
-        stats = evaluate(policy, args.episode_days, args.eval_episodes, seed0=1_000_000)
+        stats = evaluate(policy, eval_config, args.eval_episodes, seed0=1_000_000)
         print(
             f"{name:<12} {stats['profit']:>9.2f}$ {stats['degradation']:>11.2f}$ "
             f"{stats['net']:>9.2f}$ {stats['reward']:>10.3f}"
         )
+        if run:
+            import wandb
+
+            wandb.log({f"final_eval/{name}_{k}": v for k, v in stats.items()})
+    if run:
+        run.finish()
 
 
 if __name__ == "__main__":
