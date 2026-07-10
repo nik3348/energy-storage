@@ -5,6 +5,11 @@ description = "Battery storage arbitrage environment for RL"
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.26", "gymnasium>=1.0"]
 
+[project.optional-dependencies]
+train = [
+    "stable-baselines3>=2.4",
+]
+
 [dependency-groups]
 dev = ["pytest>=8"]
 
