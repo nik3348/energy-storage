@@ -22,6 +22,9 @@ class Scenario:
 
     def _envelope(self, day: int, ramp_days: float) -> float:
         """0..1 severity: ramps in at the start of the window and out at the end."""
+        # Deliberately the base-class window check, not self.active(day):
+        # subclasses may widen active() (e.g. FuelShock's decay tail) without
+        # stretching the envelope.
         if not Scenario.active(self, day):
             return 0.0
         if ramp_days <= 0:
@@ -152,5 +155,5 @@ class PlantOutage(Scenario):
         if not self.active(day):
             return
         for gen in generators:
-            if gen.name == self.generator_name and hasattr(gen, "available"):
-                gen.available = False
+            if gen.name == self.generator_name:
+                gen.force_outage()

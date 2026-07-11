@@ -2,6 +2,7 @@
 name = "energy-storage"
 version = "0.1.0"
 description = "Battery storage arbitrage environment for RL"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.26", "gymnasium>=1.0"]
 

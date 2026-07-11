@@ -17,7 +17,7 @@ from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.env_util import make_vec_env
 
 from energy_storage import BatteryArbitrageEnv, EnvConfig
-from energy_storage.baselines import evaluate, heuristic_policy, idle_policy
+from energy_storage.baselines import evaluate, heuristic_policy, idle_policy, model_policy
 
 
 def make_env_fn(episode_days: int):
@@ -76,9 +76,7 @@ def main() -> None:
     model.save(final_path)
     print(f"\nSaved final model to {final_path}.zip")
 
-    def sac_policy(env, obs):
-        action, _ = model.predict(obs, deterministic=True)
-        return action
+    sac_policy = model_policy(model)
 
     # Held-out evaluation seeds, disjoint from training and EvalCallback seeds.
     print(f"\nEvaluation over {args.eval_episodes} held-out episodes "

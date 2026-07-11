@@ -14,8 +14,8 @@ def test_charge_increases_soc_and_degrades_soh():
     info = b.step(20.0, dt_h=1.0)
     assert b.soc > 0.5
     assert b.soh < 1.0
-    assert info["grid_energy_kwh"] == pytest.approx(20.0)
-    assert info["throughput_kwh"] == pytest.approx(20.0 * math.sqrt(0.9))
+    assert info.grid_energy_kwh == pytest.approx(20.0)
+    assert info.throughput_kwh == pytest.approx(20.0 * math.sqrt(0.9))
 
 
 def test_discharge_decreases_soc_and_degrades_soh():
@@ -23,14 +23,14 @@ def test_discharge_decreases_soc_and_degrades_soh():
     info = b.step(-50.0, dt_h=1.0)
     assert b.soc < 0.5
     assert b.soh < 1.0
-    assert info["grid_energy_kwh"] < 0.0
+    assert info.grid_energy_kwh < 0.0
 
 
 def test_idle_only_incurs_calendar_aging():
     b = make_battery()
     info = b.step(0.0, dt_h=1.0)
-    assert info["cycle_loss"] == 0.0
-    assert info["calendar_loss"] > 0.0
+    assert info.cycle_loss == 0.0
+    assert info.calendar_loss > 0.0
     assert b.soh < 1.0
     # Idle for 15 years at SoC 0.5 should hit end of life.
     b.reset()
@@ -41,8 +41,8 @@ def test_idle_only_incurs_calendar_aging():
 def test_calendar_aging_faster_at_high_soc():
     hi = make_battery(initial_soc=0.9)
     lo = make_battery(initial_soc=0.1)
-    hi_loss = hi.step(0.0, dt_h=1.0)["calendar_loss"]
-    lo_loss = lo.step(0.0, dt_h=1.0)["calendar_loss"]
+    hi_loss = hi.step(0.0, dt_h=1.0).calendar_loss
+    lo_loss = lo.step(0.0, dt_h=1.0).calendar_loss
     assert hi_loss > lo_loss
 
 
@@ -50,8 +50,8 @@ def test_cycle_stress_penalizes_high_power():
     # Same 10 kWh of grid energy, delivered gently vs at full power.
     gentle = make_battery()
     hard = make_battery()
-    gentle_loss = sum(gentle.step(10.0, dt_h=0.2)["cycle_loss"] for _ in range(5))
-    hard_loss = hard.step(50.0, dt_h=0.2)["cycle_loss"]
+    gentle_loss = sum(gentle.step(10.0, dt_h=0.2).cycle_loss for _ in range(5))
+    hard_loss = hard.step(50.0, dt_h=0.2).cycle_loss
     assert gentle.soc == pytest.approx(hard.soc, rel=1e-4)
     assert hard_loss > gentle_loss
 
@@ -69,15 +69,15 @@ def test_soc_respects_bounds():
 def test_power_is_clipped_to_limits():
     b = make_battery(max_charge_kw=10.0)
     info = b.step(1000.0, dt_h=1.0)
-    assert info["grid_energy_kwh"] == pytest.approx(10.0)
+    assert info.grid_energy_kwh == pytest.approx(10.0)
 
 
 def test_round_trip_loses_energy():
     # Start empty, put 10 kWh in from the grid, then drain fully:
     # the grid gets back round_trip_efficiency of what it paid.
     b = make_battery(initial_soc=0.05)
-    charged = b.step(10.0, dt_h=1.0)["grid_energy_kwh"]
-    discharged = -b.step(-50.0, dt_h=1.0)["grid_energy_kwh"]
+    charged = b.step(10.0, dt_h=1.0).grid_energy_kwh
+    discharged = -b.step(-50.0, dt_h=1.0).grid_energy_kwh
     assert discharged < charged
     assert discharged / charged == pytest.approx(0.9, rel=1e-3)
 
@@ -102,5 +102,5 @@ def test_energy_conserved_through_degradation():
     b.step(0.0)  # idle: calendar aging shrinks capacity but conserves energy
     assert b.energy_stored_kwh == pytest.approx(stored_before)
     info = b.step(10.0, dt_h=1.0)
-    expected = stored_before + info["throughput_kwh"]
+    expected = stored_before + info.throughput_kwh
     assert b.energy_stored_kwh == pytest.approx(expected)

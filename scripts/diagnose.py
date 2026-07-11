@@ -21,7 +21,13 @@ import numpy as np
 from stable_baselines3 import SAC
 
 from energy_storage import EnvConfig
-from energy_storage.baselines import collect_episode, evaluate, heuristic_policy, idle_policy
+from energy_storage.baselines import (
+    collect_episode,
+    evaluate,
+    heuristic_policy,
+    idle_policy,
+    model_policy,
+)
 
 # Reference dataviz palette (light mode), fixed slot order.
 BLUE, AQUA, YELLOW = "#2a78d6", "#1baf7a", "#eda100"
@@ -143,10 +149,7 @@ def main() -> None:
     args = parser.parse_args()
 
     model = SAC.load(args.model)
-
-    def sac_policy(env, obs):
-        action, _ = model.predict(obs, deterministic=True)
-        return action
+    sac_policy = model_policy(model)
 
     config = EnvConfig(episode_days=args.episode_days)
 

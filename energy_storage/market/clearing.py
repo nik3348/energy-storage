@@ -17,7 +17,9 @@ def clear_hour(
     offers = sorted(offers, key=lambda o: o.price)
     dispatch = []
     remaining = demand_mw
-    price = price_cap
+    # Zero demand clears at the cheapest offer (the marginal unit at zero
+    # quantity); no offers at all is scarcity by definition.
+    price = offers[0].price if offers else price_cap
     for offer in offers:
         if remaining <= 1e-9:
             break

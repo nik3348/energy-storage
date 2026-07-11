@@ -14,10 +14,18 @@ import numpy as np
 from energy_storage.battery import Battery, BatteryConfig
 from energy_storage.market import DayResult, FuelMarketConfig, Market, MarketConfig, Scenario
 
-# Observation layout (obs dim = 11 + PRICE_WINDOW):
+# Observation layout: N_SCALAR_FEATURES scalars followed by the next
+# PRICE_WINDOW hourly day-ahead prices (log-normalized).
 # [soc, soh, sin_hour, cos_hour, sin_doy, cos_doy, is_weekend, is_holiday,
-#  temperature, wind, solar_cf, next PRICE_WINDOW hourly day-ahead prices]
+#  temperature, wind, solar_cf, prices...]
+N_SCALAR_FEATURES = 11
 PRICE_WINDOW = 24
+OBS_DIM = N_SCALAR_FEATURES + PRICE_WINDOW
+
+# Rough scales bringing raw weather features to O(1); chosen for the
+# default WeatherConfig ranges.
+TEMP_SCALE_C = 20.0
+WIND_SCALE_MS = 15.0
 
 
 def default_market_config() -> MarketConfig:
@@ -57,14 +65,25 @@ class BatteryArbitrageEnv(gym.Env):
         self._steps = 0
 
         self.action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
-        obs_dim = 11 + PRICE_WINDOW
         self.observation_space = gym.spaces.Box(
-            low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(OBS_DIM,), dtype=np.float32
         )
 
     @property
     def episode_steps(self) -> int:
         return self.config.episode_days * 24
+
+    @property
+    def hour(self) -> int:
+        """Hour of day (0-23) the next step will settle."""
+        return self._hour
+
+    @property
+    def today(self) -> DayResult:
+        """The market day the next step settles against."""
+        if self._today is None:
+            raise RuntimeError("call reset() before accessing today")
+        return self._today
 
     def _norm_price(self, price: float | np.ndarray) -> np.ndarray:
         cap = self.config.market.price_cap
@@ -89,10 +108,11 @@ class BatteryArbitrageEnv(gym.Env):
             np.cos(doy_angle),
             float(day.is_weekend),
             float(day.is_holiday),
-            day.weather.temperature_c[h] / 20.0,
-            day.weather.wind_speed_ms[h] / 15.0,
+            day.weather.temperature_c[h] / TEMP_SCALE_C,
+            day.weather.wind_speed_ms[h] / WIND_SCALE_MS,
             day.weather.solar_cf[h],
         ]
+        assert len(features) == N_SCALAR_FEATURES
         return np.concatenate([features, self._norm_price(self._price_window())]).astype(
             np.float32
         )
@@ -121,6 +141,8 @@ class BatteryArbitrageEnv(gym.Env):
         return self._obs(), {}
 
     def step(self, action):
+        if self.market is None:
+            raise RuntimeError("call reset() before step()")
         cfg = self.config
         bat_cfg = cfg.battery
         fraction = float(np.clip(np.asarray(action).reshape(-1)[0], -1.0, 1.0))
@@ -128,9 +150,9 @@ class BatteryArbitrageEnv(gym.Env):
 
         price = float(self._today.prices[self._hour])
         result = self.battery.step(power_kw, dt_h=1.0)
-        profit = -price * result["grid_energy_kwh"] / 1000.0
+        profit = -price * result.grid_energy_kwh / 1000.0
         degradation_cost = (
-            result["soh_loss"] * cfg.replacement_cost_per_kwh * bat_cfg.capacity_kwh
+            result.soh_loss * cfg.replacement_cost_per_kwh * bat_cfg.capacity_kwh
         )
         reward = (profit - degradation_cost) * cfg.reward_scale
 
@@ -138,11 +160,11 @@ class BatteryArbitrageEnv(gym.Env):
             "profit": profit,
             "degradation_cost": degradation_cost,
             "price": price,
-            "grid_energy_kwh": result["grid_energy_kwh"],
+            "grid_energy_kwh": result.grid_energy_kwh,
             "soc": self.battery.soc,
             "soh": self.battery.soh,
-            "cycle_loss": result["cycle_loss"],
-            "calendar_loss": result["calendar_loss"],
+            "cycle_loss": result.cycle_loss,
+            "calendar_loss": result.calendar_loss,
             "day": self._today.day,
             "hour": self._hour,
             "active_scenarios": self._today.active_scenarios,

@@ -31,47 +31,42 @@ class FuelMarketConfig:
     randomize_initial: bool = False
 
 
+class _OUProcess:
+    """One floored mean-reverting daily price process."""
+
+    def __init__(self, mean: float, reversion: float, sigma: float, floor: float):
+        self.mean = mean
+        self.reversion = reversion
+        self.sigma = sigma
+        self.floor = floor
+        self.value = mean
+
+    def randomize(self, rng: np.random.Generator) -> None:
+        # OU stationary std is sigma / sqrt(2 * reversion).
+        stationary_std = self.sigma / np.sqrt(2 * self.reversion)
+        self.value = max(self.floor, rng.normal(self.mean, stationary_std))
+
+    def step(self, rng: np.random.Generator) -> float:
+        drift = self.reversion * (self.mean - self.value)
+        self.value = max(self.floor, self.value + drift + rng.normal(0, self.sigma))
+        return self.value
+
+
 class FuelMarket:
     def __init__(self, config: FuelMarketConfig | None = None, rng: np.random.Generator | None = None):
         self.config = config or FuelMarketConfig()
         self.rng = rng if rng is not None else np.random.default_rng(0)
         cfg = self.config
-        self.gas = cfg.gas_mean
-        self.coal = cfg.coal_mean
-        self.carbon = cfg.carbon_mean
+        # Order matters for reproducibility: gas, coal, carbon draw from the
+        # shared rng in that order here and in step_day.
+        self._processes = [
+            _OUProcess(cfg.gas_mean, cfg.gas_reversion, cfg.gas_sigma, cfg.gas_floor),
+            _OUProcess(cfg.coal_mean, cfg.coal_reversion, cfg.coal_sigma, cfg.coal_floor),
+            _OUProcess(cfg.carbon_mean, cfg.carbon_reversion, cfg.carbon_sigma, cfg.carbon_floor),
+        ]
         if cfg.randomize_initial:
-            # OU stationary std is sigma / sqrt(2 * reversion).
-            self.gas = max(
-                cfg.gas_floor,
-                self.rng.normal(cfg.gas_mean, cfg.gas_sigma / np.sqrt(2 * cfg.gas_reversion)),
-            )
-            self.coal = max(
-                cfg.coal_floor,
-                self.rng.normal(cfg.coal_mean, cfg.coal_sigma / np.sqrt(2 * cfg.coal_reversion)),
-            )
-            self.carbon = max(
-                cfg.carbon_floor,
-                self.rng.normal(
-                    cfg.carbon_mean, cfg.carbon_sigma / np.sqrt(2 * cfg.carbon_reversion)
-                ),
-            )
+            for process in self._processes:
+                process.randomize(self.rng)
 
     def step_day(self) -> FuelPrices:
-        cfg = self.config
-        self.gas = max(
-            cfg.gas_floor,
-            self.gas + cfg.gas_reversion * (cfg.gas_mean - self.gas) + self.rng.normal(0, cfg.gas_sigma),
-        )
-        self.coal = max(
-            cfg.coal_floor,
-            self.coal
-            + cfg.coal_reversion * (cfg.coal_mean - self.coal)
-            + self.rng.normal(0, cfg.coal_sigma),
-        )
-        self.carbon = max(
-            cfg.carbon_floor,
-            self.carbon
-            + cfg.carbon_reversion * (cfg.carbon_mean - self.carbon)
-            + self.rng.normal(0, cfg.carbon_sigma),
-        )
-        return FuelPrices(self.gas, self.coal, self.carbon)
+        return FuelPrices(*(process.step(self.rng) for process in self._processes))

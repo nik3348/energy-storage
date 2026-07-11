@@ -1,4 +1,4 @@
-from energy_storage.battery import Battery, BatteryConfig
+from energy_storage.battery import Battery, BatteryConfig, BatteryStepResult
 from energy_storage.env import BatteryArbitrageEnv, EnvConfig
 from energy_storage.market import (
     ColdSnap,
@@ -16,6 +16,7 @@ __all__ = [
     "Battery",
     "BatteryArbitrageEnv",
     "BatteryConfig",
+    "BatteryStepResult",
     "ColdSnap",
     "DayResult",
     "Drought",

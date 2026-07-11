@@ -4,6 +4,7 @@ import pytest
 from gymnasium.utils.env_checker import check_env
 
 from energy_storage import BatteryArbitrageEnv, EnvConfig, FuelShock
+from energy_storage.env import N_SCALAR_FEATURES
 
 
 def test_passes_gymnasium_checker():
@@ -56,7 +57,7 @@ def test_price_window_aligns_with_settlement():
     env = BatteryArbitrageEnv()
     obs, _ = env.reset(seed=3)
     for _ in range(30):
-        first_price_obs = obs[11]
+        first_price_obs = obs[N_SCALAR_FEATURES]
         obs, _, _, _, info = env.step(np.array([0.0], dtype=np.float32))
         assert first_price_obs == pytest.approx(env._norm_price(info["price"]), abs=1e-6)
 
@@ -97,6 +98,6 @@ def test_initial_state_randomized_across_episodes():
     for _ in range(10):
         env.reset()
         socs.append(env.battery.soc)
-        days.append(env._today.day)
+        days.append(env.today.day)
     assert len(set(np.round(socs, 6))) > 1
     assert len(set(days)) > 1

@@ -29,6 +29,10 @@ class Generator:
     def settle(self, dispatched_mw: float) -> None:
         pass
 
+    def force_outage(self) -> None:
+        """Take the unit offline (scenario hook). No-op for units that
+        cannot be forced out."""
+
 
 class SolarFarm(Generator):
     """Bids negative: subsidies pay per MWh generated, so running at slightly
@@ -174,6 +178,9 @@ class ThermalUnit(Generator):
             self.available = rng.random() >= self.outage_prob_per_day
         else:
             self.available = rng.random() < self.repair_prob_per_day
+
+    def force_outage(self):
+        self.available = False
 
     def marginal_cost(self, fuels: FuelPrices) -> float:
         fuel_price = fuels.gas_per_mwh_th if self.fuel == "gas" else fuels.coal_per_mwh_th

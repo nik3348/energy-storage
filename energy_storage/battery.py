@@ -4,6 +4,17 @@ import math
 from dataclasses import dataclass
 
 
+@dataclass(frozen=True)
+class BatteryStepResult:
+    grid_energy_kwh: float  # >0 drawn from the grid, <0 delivered to it
+    throughput_kwh: float  # energy through the cells, always >= 0
+    soh_loss: float
+    cycle_loss: float
+    calendar_loss: float
+    soc: float
+    soh: float
+
+
 @dataclass
 class BatteryConfig:
     capacity_kwh: float = 100.0
@@ -59,12 +70,12 @@ class Battery:
     def energy_stored_kwh(self) -> float:
         return self.soc * self.effective_capacity_kwh
 
-    def step(self, power_kw: float, dt_h: float = 1.0) -> dict:
+    def step(self, power_kw: float, dt_h: float = 1.0) -> BatteryStepResult:
         """Charge (power_kw > 0) or discharge (power_kw < 0) for dt_h hours.
 
         Requested power is clipped to power limits and to what the SoC
-        bounds allow. Returns a dict with the grid-side energy actually
-        exchanged and the SoH lost this step.
+        bounds allow. Returns the grid-side energy actually exchanged and
+        the SoH lost this step.
         """
         cfg = self.config
         capacity = self.effective_capacity_kwh
@@ -110,12 +121,12 @@ class Battery:
         if self.soh < 1.0 and self.effective_capacity_kwh > 0.0:
             self.soc = min(cfg.soc_max, self.soc * old_capacity / self.effective_capacity_kwh)
 
-        return {
-            "grid_energy_kwh": grid_energy_kwh,
-            "throughput_kwh": throughput_kwh,
-            "soh_loss": soh_loss,
-            "cycle_loss": cycle_loss,
-            "calendar_loss": calendar_loss,
-            "soc": self.soc,
-            "soh": self.soh,
-        }
+        return BatteryStepResult(
+            grid_energy_kwh=grid_energy_kwh,
+            throughput_kwh=throughput_kwh,
+            soh_loss=soh_loss,
+            cycle_loss=cycle_loss,
+            calendar_loss=calendar_loss,
+            soc=self.soc,
+            soh=self.soh,
+        )

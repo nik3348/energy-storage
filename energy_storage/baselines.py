@@ -13,12 +13,21 @@ def idle_policy(env, obs):
 
 def heuristic_policy(env, obs):
     """Charge in the overnight trough, discharge into the evening peak."""
-    hour = env._hour
-    if 1 <= hour <= 5:
+    if 1 <= env.hour <= 5:
         return np.array([1.0], dtype=np.float32)
-    if 18 <= hour <= 21:
+    if 18 <= env.hour <= 21:
         return np.array([-1.0], dtype=np.float32)
     return np.array([0.0], dtype=np.float32)
+
+
+def model_policy(model):
+    """Wrap an SB3-style model (has .predict) as a policy_fn(env, obs)."""
+
+    def policy(env, obs):
+        action, _ = model.predict(obs, deterministic=True)
+        return action
+
+    return policy
 
 
 TRACKED_KEYS = (
