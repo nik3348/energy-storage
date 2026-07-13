@@ -26,7 +26,10 @@ Three layers, each usable standalone:
   markets work). Reward is profit minus monetized SoH degradation.
 
 `energy_storage/baselines.py` has the idle/heuristic reference policies and
-the rollout/eval helpers shared by the scripts.
+the rollout/eval helpers shared by the scripts. `energy_storage/oracle.py`
+has the optimal-dispatch benchmarks (dynamic programming on a SoC grid): a
+rolling-horizon oracle using exactly the agent's information set, and a
+hindsight upper bound over the full episode.
 
 ## Usage
 
@@ -45,10 +48,21 @@ Both scripts log to the `energy-storage` wandb project by default; pass
 
 ## Benchmarks
 
-On held-out seeds over 14-day episodes, the overnight-charge/evening-discharge
-heuristic nets about **+$16** per episode; sitting idle nets about **−$13**
-(calendar aging is unavoidable). Per-episode variance across market-weeks is
-high — compare policies on at least 20 seeded episodes.
+Net $/episode over 20 paired held-out seeds (14-day episodes):
+
+| policy | net | % of optimum |
+|---|---|---|
+| hindsight optimum | +$62 | 100% |
+| rolling-horizon oracle (24h) | +$62 | 99.8% |
+| SAC | +$52 | 83% |
+| overnight/evening heuristic | +$16 | 25% |
+| idle | −$13 | — |
+
+Calendar aging makes idling a losing strategy, and the 24h day-ahead window
+turns out to be near-sufficient information (the rolling oracle ≈ hindsight).
+Per-episode variance across market-weeks is huge — always compare policies as
+paired same-seed differences over at least 20 episodes, ideally as % of the
+hindsight optimum.
 
 Market calibration (seeded simulated year): median price ~$58/MWh, evening
 peak above overnight, scarcity in <1.5% of hours, negative prices rare but

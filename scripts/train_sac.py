@@ -20,8 +20,8 @@ from energy_storage import BatteryArbitrageEnv, EnvConfig
 from energy_storage.baselines import evaluate, heuristic_policy, idle_policy, model_policy
 
 
-def make_env_fn(episode_days: int):
-    return lambda: BatteryArbitrageEnv(EnvConfig(episode_days=episode_days))
+def make_env_fn(config: EnvConfig):
+    return lambda: BatteryArbitrageEnv(config)
 
 
 def main() -> None:
@@ -33,6 +33,9 @@ def main() -> None:
     parser.add_argument("--eval-episodes", type=int, default=20)
     parser.add_argument("--models-dir", type=Path, default=Path("models"))
     parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--observe-fuel-prices", action=argparse.BooleanOptionalAction, default=False
+    )
     args = parser.parse_args()
 
     args.models_dir.mkdir(parents=True, exist_ok=True)
@@ -48,8 +51,11 @@ def main() -> None:
             sync_tensorboard=True,
         )
 
-    train_env = make_vec_env(make_env_fn(args.episode_days), n_envs=args.n_envs, seed=args.seed)
-    eval_env = make_vec_env(make_env_fn(args.episode_days), n_envs=1, seed=args.seed + 10_000)
+    env_config = EnvConfig(
+        episode_days=args.episode_days, observe_fuel_prices=args.observe_fuel_prices
+    )
+    train_env = make_vec_env(make_env_fn(env_config), n_envs=args.n_envs, seed=args.seed)
+    eval_env = make_vec_env(make_env_fn(env_config), n_envs=1, seed=args.seed + 10_000)
     eval_callback = EvalCallback(
         eval_env,
         best_model_save_path=str(args.models_dir),
@@ -84,9 +90,8 @@ def main() -> None:
     header = f"{'policy':<12} {'profit':>10} {'degradation':>12} {'net':>10} {'reward':>10}"
     print(header)
     print("-" * len(header))
-    eval_config = EnvConfig(episode_days=args.episode_days)
     for name, policy in [("idle", idle_policy), ("heuristic", heuristic_policy), ("sac", sac_policy)]:
-        stats = evaluate(policy, eval_config, args.eval_episodes, seed0=1_000_000)
+        stats = evaluate(policy, env_config, args.eval_episodes, seed0=1_000_000)
         print(
             f"{name:<12} {stats['profit']:>9.2f}$ {stats['degradation']:>11.2f}$ "
             f"{stats['net']:>9.2f}$ {stats['reward']:>10.3f}"

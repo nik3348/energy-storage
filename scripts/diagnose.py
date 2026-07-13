@@ -146,12 +146,20 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=2_000_000)
     parser.add_argument("--out", type=Path, default=Path("diagnostics"))
     parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--observe-fuel-prices",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="must match how the model was trained (observation shape)",
+    )
     args = parser.parse_args()
 
     model = SAC.load(args.model)
     sac_policy = model_policy(model)
 
-    config = EnvConfig(episode_days=args.episode_days)
+    config = EnvConfig(
+        episode_days=args.episode_days, observe_fuel_prices=args.observe_fuel_prices
+    )
 
     print("Rolling out episodes...")
     trajectories = {
