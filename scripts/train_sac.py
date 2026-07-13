@@ -31,6 +31,12 @@ def main() -> None:
     parser.add_argument("--episode-days", type=int, default=14)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--eval-episodes", type=int, default=20)
+    parser.add_argument(
+        "--eval-freq",
+        type=int,
+        default=20_000,
+        help="training steps between EvalCallback evals; raise for long episodes",
+    )
     parser.add_argument("--models-dir", type=Path, default=Path("models"))
     parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument(
@@ -60,7 +66,7 @@ def main() -> None:
         eval_env,
         best_model_save_path=str(args.models_dir),
         n_eval_episodes=5,
-        eval_freq=max(20_000 // args.n_envs, 1),
+        eval_freq=max(args.eval_freq // args.n_envs, 1),
         verbose=1,
     )
 
