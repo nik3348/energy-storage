@@ -21,7 +21,7 @@ from energy_storage.market.weather import (
 
 @dataclass
 class MarketConfig:
-    price_cap: float = 3000.0  # value of lost load: paid when supply falls short
+    price_cap: float = 1000.0  # value of lost load: paid when supply falls short
     price_floor: float = -100.0
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
     weather: WeatherConfig = field(default_factory=WeatherConfig)
