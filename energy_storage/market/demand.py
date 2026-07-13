@@ -22,8 +22,15 @@ class DemandConfig:
     weekend_profile_mw: tuple = WEEKEND_PROFILE_MW
     heating_ref_c: float = 15.0
     cooling_ref_c: float = 21.0
+    # Heating-dominated (European): cooling load is modest, so summer stays
+    # calm and the demand peak is the winter evening.
     heating_mw_per_c: float = 10.0
-    cooling_mw_per_c: float = 14.0
+    cooling_mw_per_c: float = 5.0
+    # Base load itself is seasonal (dark winters use more electricity even
+    # before heating): +/- this fraction around the annual mean, peaking
+    # at seasonal_peak_doy.
+    seasonal_amp: float = 0.10
+    seasonal_peak_doy: int = 15
     holiday_factor: float = 0.85
     noise_sigma: float = 0.02  # multiplicative
 
@@ -34,10 +41,12 @@ class Demand:
         self.rng = rng if rng is not None else np.random.default_rng(0)
 
     def simulate_day(
-        self, temperature_c: np.ndarray, is_weekend: bool, is_holiday: bool
+        self, day_of_year: int, temperature_c: np.ndarray, is_weekend: bool, is_holiday: bool
     ) -> np.ndarray:
         cfg = self.config
         profile = np.array(cfg.weekend_profile_mw if is_weekend else cfg.weekday_profile_mw, float)
+        phase = 2.0 * np.pi * (day_of_year - cfg.seasonal_peak_doy) / 365.0
+        profile = profile * (1.0 + cfg.seasonal_amp * np.cos(phase))
         if is_holiday:
             profile = profile * cfg.holiday_factor
         heating = cfg.heating_mw_per_c * np.clip(cfg.heating_ref_c - temperature_c, 0.0, None)

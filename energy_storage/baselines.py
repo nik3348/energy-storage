@@ -40,6 +40,7 @@ TRACKED_KEYS = (
     "cycle_loss",
     "calendar_loss",
     "hour",
+    "day",
 )
 
 

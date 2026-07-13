@@ -72,13 +72,13 @@ class Market:
         is_holiday = self.calendar.is_holiday(day)
 
         weather = self.weather.simulate_day(doy)
-        fuel_prices = self.fuels.step_day()
+        fuel_prices = self.fuels.step_day(doy)
         # Scenario shocks apply before demand so e.g. a cold snap raises
         # heating load, and before new_day so hydro sees drought inflows.
         for scenario in self.scenarios:
             weather = scenario.modify_weather(day, weather)
             fuel_prices = scenario.modify_fuels(day, fuel_prices)
-        demand = self.demand.simulate_day(weather.temperature_c, is_weekend, is_holiday)
+        demand = self.demand.simulate_day(doy, weather.temperature_c, is_weekend, is_holiday)
         for gen in self.generators:
             gen.new_day(self.rng, weather)
         for scenario in self.scenarios:

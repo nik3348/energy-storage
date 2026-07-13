@@ -26,10 +26,28 @@ def test_evening_peak_pricier_than_night(year):
     assert prices[:, 18:21].mean() > prices[:, 2:5].mean() + 5.0
 
 
-def test_holidays_cheaper(year):
-    holiday = np.array([d.prices.mean() for d in year if d.is_holiday])
-    workday = np.array([d.prices.mean() for d in year if not d.is_holiday and not d.is_weekend])
-    assert holiday.mean() < workday.mean()
+def test_holidays_cheaper_than_nearby_workdays(year):
+    # Compare each holiday to workdays within +/-10 days so the seasonal
+    # price level (winter premium) doesn't confound the holiday effect.
+    deltas = []
+    for h in (d for d in year if d.is_holiday):
+        nearby = [
+            d.prices.mean()
+            for d in year
+            if not d.is_holiday
+            and not d.is_weekend
+            and 0 < abs(d.day_of_year - h.day_of_year) <= 10
+        ]
+        deltas.append(h.prices.mean() - np.mean(nearby))
+    assert deltas and np.mean(deltas) < 0
+
+
+def test_winter_pricier_than_summer(year):
+    # The European calibration gate: winter carries a broad price premium
+    # (seasonal gas + seasonal demand), not just spikier tails.
+    winter = np.concatenate([d.prices for d in year if d.day_of_year < 45 or d.day_of_year >= 320])
+    summer = np.concatenate([d.prices for d in year if 135 <= d.day_of_year < 250])
+    assert np.median(winter) > np.median(summer) + 10.0
 
 
 def test_negative_prices_rare_but_present(year):
