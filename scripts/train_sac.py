@@ -39,9 +39,6 @@ def main() -> None:
     )
     parser.add_argument("--models-dir", type=Path, default=Path("models"))
     parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument(
-        "--observe-fuel-prices", action=argparse.BooleanOptionalAction, default=False
-    )
     args = parser.parse_args()
 
     args.models_dir.mkdir(parents=True, exist_ok=True)
@@ -57,9 +54,7 @@ def main() -> None:
             sync_tensorboard=True,
         )
 
-    env_config = EnvConfig(
-        episode_days=args.episode_days, observe_fuel_prices=args.observe_fuel_prices
-    )
+    env_config = EnvConfig(episode_days=args.episode_days)
     train_env = make_vec_env(make_env_fn(env_config), n_envs=args.n_envs, seed=args.seed)
     eval_env = make_vec_env(make_env_fn(env_config), n_envs=1, seed=args.seed + 10_000)
     eval_callback = EvalCallback(

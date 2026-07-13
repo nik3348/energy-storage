@@ -4,7 +4,7 @@ import pytest
 from gymnasium.utils.env_checker import check_env
 
 from energy_storage import BatteryArbitrageEnv, EnvConfig, FuelShock
-from energy_storage.env import N_FUEL_FEATURES, N_SCALAR_FEATURES
+from energy_storage.env import N_SCALAR_FEATURES
 
 
 def test_passes_gymnasium_checker():
@@ -90,44 +90,6 @@ def test_scenario_sampler_applies():
     env.reset(seed=6)
     _, _, _, _, info = env.step(np.array([0.0], dtype=np.float32))
     assert "fuel-shock" in info["active_scenarios"]
-
-
-def test_fuel_price_observation_flag():
-    base = BatteryArbitrageEnv()
-    env = BatteryArbitrageEnv(EnvConfig(observe_fuel_prices=True))
-    assert (
-        env.observation_space.shape[0]
-        == base.observation_space.shape[0] + N_FUEL_FEATURES
-    )
-    obs, _ = env.reset(seed=7)
-    fuels_cfg = env.config.market.fuels
-    fp = env.today.fuel_prices
-    np.testing.assert_allclose(
-        obs[-N_FUEL_FEATURES:],
-        [
-            fp.gas_per_mwh_th / fuels_cfg.gas_mean,
-            fp.coal_per_mwh_th / fuels_cfg.coal_mean,
-            fp.carbon_per_t / fuels_cfg.carbon_mean,
-        ],
-        rtol=1e-6,
-    )
-    check_env(env, skip_render_check=True)
-
-
-def test_fuel_shock_visible_in_observation():
-    def sampler(rng, start_day):
-        return [FuelShock(start_day=start_day, duration_days=30, fuel="gas", magnitude=3.0)]
-
-    calm = BatteryArbitrageEnv(EnvConfig(observe_fuel_prices=True))
-    shocked = BatteryArbitrageEnv(EnvConfig(observe_fuel_prices=True, scenario_sampler=sampler))
-    obs_calm, _ = calm.reset(seed=8)
-    obs_shocked, _ = shocked.reset(seed=8)
-    gas, coal, carbon = -N_FUEL_FEATURES, -N_FUEL_FEATURES + 1, -N_FUEL_FEATURES + 2
-    # Scenarios consume no randomness, so same-seed fuel draws are identical
-    # and the shock shows up as exactly its magnitude on gas only.
-    assert obs_shocked[gas] == pytest.approx(obs_calm[gas] * 3.0, rel=1e-6)
-    assert obs_shocked[coal] == pytest.approx(obs_calm[coal], rel=1e-6)
-    assert obs_shocked[carbon] == pytest.approx(obs_calm[carbon], rel=1e-6)
 
 
 def test_initial_state_randomized_across_episodes():

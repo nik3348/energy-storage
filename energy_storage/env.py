@@ -15,14 +15,11 @@ from energy_storage.battery import Battery, BatteryConfig
 from energy_storage.market import DayResult, FuelMarketConfig, Market, MarketConfig, Scenario
 
 # Observation layout: N_SCALAR_FEATURES scalars, then the next PRICE_WINDOW
-# hourly day-ahead prices (log-normalized), then — only when
-# EnvConfig.observe_fuel_prices — N_FUEL_FEATURES fuel prices. Fuel features
-# go last so all other indices are the same with the flag on or off.
+# hourly day-ahead prices (log-normalized).
 # [soc, soh, sin_hour, cos_hour, sin_doy, cos_doy, is_weekend, is_holiday,
-#  temperature, wind, solar_cf, prices..., (gas, coal, carbon)]
+#  temperature, wind, solar_cf, prices...]
 N_SCALAR_FEATURES = 11
 PRICE_WINDOW = 24
-N_FUEL_FEATURES = 3
 
 # Rough scales bringing raw weather features to O(1); chosen for the
 # default WeatherConfig ranges.
@@ -48,11 +45,6 @@ class EnvConfig:
     # Days simulated before the episode starts, letting weather/fuel AR
     # states wander away from their initial values.
     burn_in_days: int = 3
-    # Append today's gas/coal/carbon prices (mean-normalized) to the
-    # observation. Realistic — these are public data — and lets the policy
-    # infer how persistent the current price regime is beyond the 24h
-    # window (fuel shocks last weeks; calm-wind spikes last hours).
-    observe_fuel_prices: bool = False
     # Optional domain randomization: called at reset with (rng, start_day),
     # returns scenarios for the episode.
     scenario_sampler: Callable[[np.random.Generator, int], list[Scenario]] | None = None
@@ -73,8 +65,6 @@ class BatteryArbitrageEnv(gym.Env):
 
         self.action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
         obs_dim = N_SCALAR_FEATURES + PRICE_WINDOW
-        if self.config.observe_fuel_prices:
-            obs_dim += N_FUEL_FEATURES
         self.observation_space = gym.spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
@@ -126,15 +116,6 @@ class BatteryArbitrageEnv(gym.Env):
         ]
         assert len(features) == N_SCALAR_FEATURES
         parts = [features, self._norm_price(self.price_window())]
-        if self.config.observe_fuel_prices:
-            fuels_cfg = self.config.market.fuels
-            parts.append(
-                [
-                    day.fuel_prices.gas_per_mwh_th / fuels_cfg.gas_mean,
-                    day.fuel_prices.coal_per_mwh_th / fuels_cfg.coal_mean,
-                    day.fuel_prices.carbon_per_t / fuels_cfg.carbon_mean,
-                ]
-            )
         return np.concatenate(parts).astype(np.float32)
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
