@@ -42,6 +42,10 @@ class DayResult:
     weather: WeatherDay
     fuel_prices: FuelPrices
     active_scenarios: list[str]
+    # Highest dispatched bid by tech each hour (the marginal unit's bid for
+    # that tech). NaN where the tech did not run. Used to stack the supply
+    # curve in the actual clearing merit order rather than a fixed order.
+    marginal_bid_by_tech: dict[str, np.ndarray] = field(default_factory=dict)
 
 
 class Market:
@@ -87,6 +91,10 @@ class Market:
         prices = np.empty(24)
         unserved = np.zeros(24)
         generation: dict[str, np.ndarray] = defaultdict(lambda: np.zeros(24))
+        # Highest dispatched bid per tech per hour; NaN where the tech didn't
+        # run. clear_hour returns dispatch cheapest-first, so the last write
+        # per tech in the loop below is the marginal (dearest dispatched) bid.
+        marginal_bid: dict[str, np.ndarray] = defaultdict(lambda: np.full(24, np.nan))
         gens_by_name = {g.name: g for g in self.generators}
 
         for h in range(24):
@@ -98,6 +106,7 @@ class Market:
             dispatched_by_gen: dict[str, float] = defaultdict(float)
             for offer, mw in dispatch:
                 generation[offer.tech][h] += mw
+                marginal_bid[offer.tech][h] = offer.price
                 dispatched_by_gen[offer.generator] += mw
             for name, mw in dispatched_by_gen.items():
                 gens_by_name[name].settle(mw)
@@ -116,4 +125,5 @@ class Market:
             weather=weather,
             fuel_prices=fuel_prices,
             active_scenarios=[s.name for s in self.scenarios if s.active(day)],
+            marginal_bid_by_tech=dict(marginal_bid),
         )
