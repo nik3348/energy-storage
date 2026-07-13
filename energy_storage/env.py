@@ -89,7 +89,9 @@ class BatteryArbitrageEnv(gym.Env):
         cap = self.config.market.price_cap
         return np.sign(price) * np.log1p(np.abs(price)) / np.log1p(cap)
 
-    def _price_window(self) -> np.ndarray:
+    def price_window(self) -> np.ndarray:
+        """The next PRICE_WINDOW hourly day-ahead prices ($/MWh), starting with
+        the hour the next step settles. This is the agent's information set."""
         return np.concatenate(
             [self._today.prices[self._hour :], self._tomorrow.prices[: self._hour]]
         )
@@ -113,7 +115,7 @@ class BatteryArbitrageEnv(gym.Env):
             day.weather.solar_cf[h],
         ]
         assert len(features) == N_SCALAR_FEATURES
-        return np.concatenate([features, self._norm_price(self._price_window())]).astype(
+        return np.concatenate([features, self._norm_price(self.price_window())]).astype(
             np.float32
         )
 
