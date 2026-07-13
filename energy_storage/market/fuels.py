@@ -1,10 +1,4 @@
-"""Fuel and carbon prices as mean-reverting (Ornstein-Uhlenbeck) daily processes.
-
-Gas is seasonal: European heating demand makes the fuel itself dearer in
-winter, so the gas process reverts to a mean that peaks in midwinter. This is
-what gives the market its winter price premium — the marginal CCGT costs more
-for months at a time. Coal (storable) and carbon are aseasonal.
-"""
+"""Fuel and carbon prices as mean-reverting (Ornstein-Uhlenbeck) daily processes."""
 
 import math
 
@@ -23,8 +17,11 @@ class FuelPrices:
 @dataclass
 class FuelMarketConfig:
     gas_mean: float = 25.0
-    # Seasonal swing of the gas mean: +35% around midwinter, -35% midsummer.
-    gas_seasonal_amp: float = 0.35
+    # Optional seasonal swing of the gas mean (real European gas is dearer in
+    # winter — heating demand). Off by default: the market's winter price
+    # premium is left to emerge from U-shaped electricity consumption against
+    # a sloped merit order, keeping the two mechanisms separable.
+    gas_seasonal_amp: float = 0.0
     gas_peak_doy: int = 15
     gas_reversion: float = 0.03
     gas_sigma: float = 0.9

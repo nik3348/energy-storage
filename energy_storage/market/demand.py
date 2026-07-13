@@ -24,12 +24,12 @@ class DemandConfig:
     cooling_ref_c: float = 21.0
     # Heating-dominated (European): cooling load is modest, so summer stays
     # calm and the demand peak is the winter evening.
-    heating_mw_per_c: float = 10.0
+    heating_mw_per_c: float = 12.0
     cooling_mw_per_c: float = 5.0
     # Base load itself is seasonal (dark winters use more electricity even
     # before heating): +/- this fraction around the annual mean, peaking
     # at seasonal_peak_doy.
-    seasonal_amp: float = 0.10
+    seasonal_amp: float = 0.13
     seasonal_peak_doy: int = 15
     holiday_factor: float = 0.85
     noise_sigma: float = 0.02  # multiplicative

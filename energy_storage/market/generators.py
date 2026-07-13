@@ -40,7 +40,7 @@ class SolarFarm(Generator):
 
     tech = "solar"
 
-    def __init__(self, name: str = "solar", capacity_mw: float = 300.0, bid: float = -25.0):
+    def __init__(self, name: str = "solar", capacity_mw: float = 500.0, bid: float = -25.0):
         self.name = name
         self.capacity_mw = capacity_mw
         self.bid = bid
@@ -203,16 +203,24 @@ class ThermalUnit(Generator):
 
 
 def default_fleet() -> list[Generator]:
+    """A deliberately granular thermal fleet: units of varying vintage and
+    efficiency make the merit order slope, so seasonal demand swings move the
+    marginal cost — that slope is what turns U-shaped consumption into a
+    winter price premium. Emissions scale inversely with efficiency."""
     return [
         SolarFarm(),
         WindFarm(),
         GeothermalPlant(),
         HydroPlant(),
-        ThermalUnit("coal-1", "coal", 150.0, 0.40, 0.85, min_output_fraction=0.3),
-        ThermalUnit("coal-2", "coal", 120.0, 0.36, 0.92, min_output_fraction=0.3),
-        ThermalUnit("ccgt-1", "gas", 200.0, 0.56, 0.33),
-        ThermalUnit("ccgt-2", "gas", 200.0, 0.51, 0.36),
-        ThermalUnit("ocgt-1", "gas", 60.0, 0.32, 0.55, vom_per_mwh=8.0),
-        ThermalUnit("ocgt-2", "gas", 60.0, 0.30, 0.58, vom_per_mwh=8.0),
-        ThermalUnit("ocgt-3", "gas", 60.0, 0.28, 0.60, vom_per_mwh=8.0),
+        ThermalUnit("coal-1", "coal", 100.0, 0.42, 0.81, min_output_fraction=0.3),
+        ThermalUnit("coal-2", "coal", 80.0, 0.36, 0.94, min_output_fraction=0.3),
+        ThermalUnit("ccgt-1", "gas", 100.0, 0.60, 0.30),
+        ThermalUnit("ccgt-2", "gas", 100.0, 0.54, 0.34),
+        ThermalUnit("ccgt-3", "gas", 100.0, 0.48, 0.38),
+        ThermalUnit("ccgt-4", "gas", 100.0, 0.43, 0.42),
+        ThermalUnit("gas-steam-1", "gas", 60.0, 0.38, 0.48, vom_per_mwh=4.0),
+        ThermalUnit("gas-steam-2", "gas", 60.0, 0.34, 0.53, vom_per_mwh=4.0),
+        ThermalUnit("ocgt-1", "gas", 40.0, 0.32, 0.57, vom_per_mwh=8.0),
+        ThermalUnit("ocgt-2", "gas", 40.0, 0.29, 0.62, vom_per_mwh=8.0),
+        ThermalUnit("ocgt-3", "gas", 40.0, 0.26, 0.70, vom_per_mwh=8.0),
     ]

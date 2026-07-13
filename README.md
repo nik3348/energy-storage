@@ -13,10 +13,12 @@ Three layers, each usable standalone:
   losses, and SoH degradation from cycling (worse at high power) and calendar
   aging (worse at high SoC).
 - **`energy_storage/market/`** — the price simulator, calibrated to a
-  European (heating-dominated) profile: seasonal gas prices and winter-peaking
-  base load give winter a broad price premium, scarcity concentrates in
-  winter/early spring, and negative prices show up on sunny low-demand summer
-  middays. `Market.simulate_day()` runs one day: calendar/weather drivers →
+  European (heating-dominated) profile: consumption is U-shaped over the year
+  (winter-peaking base load plus heating), and because the thermal fleet is
+  granular enough for the merit order to slope, that consumption pattern
+  *emerges* as a winter price premium. Intra-day spreads come largely from
+  the solar duck curve; scarcity concentrates in winter/early spring, and
+  negative prices show up on sunny summer middays. `Market.simulate_day()` runs one day: calendar/weather drivers →
   demand and mean-reverting fuel prices → generators submit `(price,
   quantity)` offers → a uniform-price merit-order auction clears each hour.
   Scenarios (`ColdSnap`, `HeatWave`, `FuelShock`, `Drought`, `PlantOutage`)
@@ -54,9 +56,9 @@ market):
 
 | policy | net | % of optimum |
 |---|---|---|
-| hindsight optimum | +$66 | 100% |
-| rolling-horizon oracle (24h) | +$66 | ≈100% |
-| overnight/evening heuristic | +$29 | 44% |
+| hindsight optimum | +$90 | 100% |
+| rolling-horizon oracle (24h) | +$90 | ≈100% |
+| overnight/evening heuristic | +$45 | 50% |
 | idle | −$13 | — |
 
 (SAC numbers pending retrain on the European market.) Calendar aging makes
