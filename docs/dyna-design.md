@@ -77,11 +77,14 @@ unlimited-data reference point.
   dependence is deliberately low-dimensional to limit autoregressive drift;
   yesterday's prices carry the signature of the slow latent states (fuel OU
   level, reservoir fill, weather regime).
-- **Architecture v1**: MLP with diagonal-Gaussian heads over the 24 output dims
-  (24 means + 24 log-stds; MBPO-standard probabilistic net). Known limitation:
-  diagonal residuals under-generate *correlated* spike blocks (scarcity
-  evenings). Upgrade path if the validation gate fails: small CVAE (≈8-dim
-  latent) or hour-autoregressive head.
+- **Architecture**: hour-autoregressive GRU — conditioning seeds the hidden
+  state, then each hour's price is a Gaussian given the sampled hours before
+  it, so scarcity blocks emerge as "spike begets spike". Flat diagonal and
+  low-rank Gaussian heads were tried first and failed the gate: without
+  within-day conditioning they must explain scarcity blocks as fat per-hour
+  tails, which over-disperses spreads (163–447 vs 85 real $/day) and drowns
+  the seasonal gaps. Remaining upgrade path if the gate still fails: small
+  CVAE (≈8-dim latent).
 - **Ensemble**: K = 5, bootstrap-resampled days + different init seeds. Each
   imagined episode draws one member; disagreement is retained as a future OOD
   signal.
