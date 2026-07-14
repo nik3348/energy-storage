@@ -28,8 +28,11 @@ The environment decomposes cleanly because the agent is a **price-taker**:
 
 Consequences:
 
-- The only thing to learn is a **generative model of market days**
-  (prices + the weather features the observation exposes).
+- The only thing to learn is a **generative model of market days** — just the
+  24 daily prices. Weather is not observed by the agent (it affects reward
+  only through prices, and the day-ahead window reveals those exactly; the
+  rolling-horizon oracle hits 99.9% of hindsight from prices alone), so the
+  model doesn't generate it.
 - **Model error cannot compound through actions** (the MBPO failure mode).
   Imagined rollouts are exact battery physics driven by a synthetic exogenous
   sequence; error lives only in that sequence.
@@ -64,20 +67,21 @@ unlimited-data reference point.
 
 ## The market model
 
-**Unit of generation: one day** (24 prices + 24×3 weather), matching the env's
-two-day `DayResult` buffer and the day-ahead information structure.
+**Unit of generation: one day** (24 prices), matching the env's two-day
+`DayResult` buffer and the day-ahead information structure.
 
 - **Target space**: prices in the env's log-normalized space
-  (`sign(p)·log1p(|p|)/log1p(cap)`), temperature `/TEMP_SCALE_C`, wind
-  `/WIND_SCALE_MS`, solar_cf raw. Everything O(1); spikes compressed.
-- **Conditioning**: `[sin/cos doy, is_weekend, is_holiday,` compressed previous-day
-  stats `(mean/min/max price, mean temp, mean wind, mean solar)]`. Prev-day
-  dependence is deliberately low-dimensional to limit autoregressive drift.
-- **Architecture v1**: MLP with diagonal-Gaussian heads over the 96 output dims
-  (MBPO-standard probabilistic net). Known limitation: diagonal residuals
-  under-generate *correlated* spike blocks (scarcity evenings). Upgrade path if
-  the validation gate fails: small CVAE (≈8-dim latent) or hour-autoregressive
-  head.
+  (`sign(p)·log1p(|p|)/log1p(cap)`). O(1); spikes compressed.
+- **Conditioning** (7 dims): `[sin/cos doy, is_weekend, is_holiday,` compressed
+  previous-day price stats `(mean/min/max, log-normalized)]`. Prev-day
+  dependence is deliberately low-dimensional to limit autoregressive drift;
+  yesterday's prices carry the signature of the slow latent states (fuel OU
+  level, reservoir fill, weather regime).
+- **Architecture v1**: MLP with diagonal-Gaussian heads over the 24 output dims
+  (24 means + 24 log-stds; MBPO-standard probabilistic net). Known limitation:
+  diagonal residuals under-generate *correlated* spike blocks (scarcity
+  evenings). Upgrade path if the validation gate fails: small CVAE (≈8-dim
+  latent) or hour-autoregressive head.
 - **Ensemble**: K = 5, bootstrap-resampled days + different init seeds. Each
   imagined episode draws one member; disagreement is retained as a future OOD
   signal.
@@ -97,8 +101,9 @@ imagination — this gate is what makes the Dyna result interpretable.
 - `energy_storage/market_model.py`: dataset builder (days → tensors),
   `MarketDayModel`, `MarketModelEnsemble` (fit / sample_day / disagreement).
 - `LearnedMarket`: duck-types `Market` (`simulate_day() -> DayResult`, settable
-  `day`). Returns real calendar flags, synthetic prices + `WeatherDay`; dispatch
-  and fuel fields left empty/dummy — nothing downstream of the env reads them.
+  `day`). Returns real calendar flags and synthetic prices; weather, dispatch
+  and fuel fields left empty/dummy — nothing downstream of the env reads them
+  (weather was dropped from the observation, July 2026).
 - `ReplayedMarket` (arm B): serves stored days verbatim, wrapping at the end.
 - `EnvConfig.market_factory: Callable[[MarketConfig, int], MarketLike] | None`
   — `reset()` calls it instead of constructing `Market` when set. No other env
@@ -123,7 +128,9 @@ imagination — this gate is what makes the Dyna result interpretable.
   over-generates them trains a reckless one. The gate quantifies this before RL.
 - **Autoregressive drift** over long synthetic horizons — mitigated by
   calendar-dominant conditioning and 14-day training episodes.
-- **Fuel prices are unobserved** by design (removed from the observation); the
-  model learns price *levels* implicitly through the conditioning + residual
-  variance. Fuel-shock robustness therefore tests level-shift generalization —
-  exactly the point.
+- **Fuel prices and weather are unobserved** by design (both removed from the
+  observation — the day-ahead price window is the agent's whole information
+  set, and the rolling-horizon oracle shows it is near-sufficient); the model
+  learns price *levels* implicitly through the conditioning + residual
+  variance. Scenario robustness therefore tests generalization to shifted
+  price regimes — exactly the point.

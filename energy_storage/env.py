@@ -17,14 +17,12 @@ from energy_storage.market import DayResult, FuelMarketConfig, Market, MarketCon
 # Observation layout: N_SCALAR_FEATURES scalars, then the next PRICE_WINDOW
 # hourly day-ahead prices (log-normalized).
 # [soc, soh, sin_hour, cos_hour, sin_doy, cos_doy, is_weekend, is_holiday,
-#  temperature, wind, solar_cf, prices...]
-N_SCALAR_FEATURES = 11
+#  prices...]
+# Weather is deliberately not observed: it affects reward only through
+# prices, and the next 24 prices are known exactly (day-ahead market) —
+# the rolling-horizon oracle hits 99.9% of hindsight from prices alone.
+N_SCALAR_FEATURES = 8
 PRICE_WINDOW = 24
-
-# Rough scales bringing raw weather features to O(1); chosen for the
-# default WeatherConfig ranges.
-TEMP_SCALE_C = 20.0
-WIND_SCALE_MS = 15.0
 
 
 def default_market_config() -> MarketConfig:
@@ -110,9 +108,6 @@ class BatteryArbitrageEnv(gym.Env):
             np.cos(doy_angle),
             float(day.is_weekend),
             float(day.is_holiday),
-            day.weather.temperature_c[h] / TEMP_SCALE_C,
-            day.weather.wind_speed_ms[h] / WIND_SCALE_MS,
-            day.weather.solar_cf[h],
         ]
         assert len(features) == N_SCALAR_FEATURES
         parts = [features, self._norm_price(self.price_window())]
