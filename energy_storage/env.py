@@ -46,6 +46,11 @@ class EnvConfig:
     # Optional domain randomization: called at reset with (rng, start_day),
     # returns scenarios for the episode.
     scenario_sampler: Callable[[np.random.Generator, int], list[Scenario]] | None = None
+    # Optional world-model hook (Dyna arms): called at reset with
+    # (market config, seed) instead of constructing the real Market. The
+    # return value must duck-type Market: `simulate_day() -> DayResult` and
+    # a settable integer `day`.
+    market_factory: Callable[[MarketConfig, int], Market] | None = None
 
 
 class BatteryArbitrageEnv(gym.Env):
@@ -119,7 +124,10 @@ class BatteryArbitrageEnv(gym.Env):
 
         market_seed = int(self.np_random.integers(2**31))
         start_day = int(self.np_random.integers(365))
-        self.market = Market(config=cfg.market, seed=market_seed)
+        if cfg.market_factory is not None:
+            self.market = cfg.market_factory(cfg.market, market_seed)
+        else:
+            self.market = Market(config=cfg.market, seed=market_seed)
         if cfg.scenario_sampler is not None:
             self.market.scenarios = list(cfg.scenario_sampler(self.np_random, start_day))
         self.market.day = start_day - cfg.burn_in_days
