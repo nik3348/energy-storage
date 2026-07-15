@@ -1,8 +1,9 @@
 # Rapid adaptation to persistent regime shifts
 
-Status: draft design, pre-implementation. Sequel to the Dyna budget
-experiment (docs/dyna-design.md); reuses its arms' checkpoints and the
-market-model machinery.
+Status: implemented (`energy_storage/adaptation.py`,
+`scripts/run_adaptation.py`, `scripts/plot_adaptation.py`); results pending.
+Sequel to the Dyna budget experiment (docs/dyna-design.md); reuses its
+arms' checkpoints and the market-model machinery.
 
 ## Framing
 
@@ -114,24 +115,36 @@ imagination is drifting and the run is flagged.
    smallest on fuel step — mirroring which shifts the observation itself
    can already convey.
 
-## Infrastructure needed
+## Infrastructure (implemented)
 
-- **Streaming evaluation harness** (`energy_storage/adaptation.py`): run
-  policies day-by-day on one continuous scenario-bearing market, with an
-  optional per-day `on_day_end` callback (where adaptive arms retrain);
-  collects per-day nets for policies + oracle. The existing env is
-  episodic; this harness drives it as one long episode (episode_days =
-  horizon) per arm with shared seeds.
-- `MarketModelEnsemble.fine_tune(x, y, epochs, from_current=True)` — thin
-  wrapper over the existing fit loop without re-init.
-- SAC warm-start fine-tuning: continue `model.learn()` on a rebuilt
-  LearnedMarket vec env (SB3 supports this; needs `reset_num_timesteps=False`).
-- Long-duration scenario check: scenarios already take `duration_days`;
-  verify drought/outage ramp behavior over 90-day spans.
+- **Streaming evaluation harness** (`energy_storage/adaptation.py`):
+  `run_stream(arm, config, seed)` drives one long episode (episode_days =
+  horizon) day-by-day; after each settled day the arm's `end_of_day(record)`
+  hook fires (where adaptive arms retrain) and may return per-day logs
+  (NLL, disagreement, adapted flag) that land in the CSV. Arms sharing a
+  reset seed see identical markets — pairing is automatic because prices
+  are exogenous.
+- `MarketModelEnsemble.fine_tune(x, y, epochs, lr)` — continues every
+  member from current weights (fresh bootstrap per member); and
+  `MarketModelEnsemble.day_nll(x, y)` — exact chain-rule mixture NLL of an
+  observed day, the detection signal.
+- `AdaptiveDynaArm` implements the nightly loop below; the imagination env
+  holds the ensemble by reference, so every generated day uses the latest
+  fine-tuned weights without rebuilding envs. SAC warm-starts via
+  `model.learn(reset_num_timesteps=False)` on a fresh small replay buffer
+  (100k — stale imagination ages out), reseeded nightly with planner demos
+  on the trailing real days. An optional `nll_trigger` turns the phase-2
+  triggered variant on; default adapts every night.
+- `OnlineFinetuneArm`: loaded SAC refills a fresh buffer at 24 real
+  transitions/day, N gradient steps nightly (training starts once a full
+  batch exists, ~day 11, still pre-shift).
 - `scripts/run_adaptation.py`: `--shift {fuel-step,capacity-loss,cold-regime}
-  --arm {frozen-dyna,frozen-ideal,adaptive-dyna,online-ft,heuristic}
-  --seeds N`, writes per-day CSV; `scripts/plot_adaptation.py` for the
-  recovery curves.
+  --arm {oracle,frozen-dyna,frozen-ideal,adaptive-dyna,online-ft,heuristic}
+  --seeds N`, one CSV per seed under results/adaptation/{shift}/;
+  `scripts/plot_adaptation.py --shift ...` renders the capture curves +
+  detection trace and prints recovery lag / cumulative regret. The
+  capacity-loss shift outages `coal-1` (the cheap 100 MW baseload with a
+  min-run block) so the merit order reshapes, not just the level.
 
 ## Risks
 

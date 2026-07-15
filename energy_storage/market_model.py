@@ -139,9 +139,49 @@ class MarketModelEnsemble:
             losses.append(_fit_one(model, x[idx], y[idx], epochs, batch_size, lr, rng))
         return losses
 
+    def fine_tune(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        epochs: int = 25,
+        batch_size: int = 64,
+        lr: float = 3e-4,
+        seed: int = 0,
+    ) -> list[float]:
+        """Continue training every member from its current weights (fresh
+        bootstrap per member, so ensemble diversity survives). The adaptation
+        loop's nightly model update — deliberately not a refit from scratch:
+        pre-shift structure (diurnal shape, calendar response) must persist."""
+        rng = np.random.default_rng(seed)
+        self.prev_stats_mean = x[:, 4:7].mean(axis=0).astype(np.float64)
+        losses = []
+        for model in self.members:
+            idx = rng.integers(0, len(x), size=len(x))
+            losses.append(_fit_one(model, x[idx], y[idx], epochs, batch_size, lr, rng))
+        return losses
+
     def sample_day(self, x: np.ndarray, rng: np.random.Generator, member: int) -> np.ndarray:
         """One day of prices in the log-normalized space, shape (24,)."""
         return self.members[member].rollout(x, rng)
+
+    @torch.no_grad()
+    def day_nll(self, x: np.ndarray, y: np.ndarray) -> float:
+        """Exact NLL of one observed day under the ensemble mixture: chain
+        rule over hours (teacher-forced per-hour Gaussians), logsumexp over
+        members. The adaptation loop's detection signal — a regime shift
+        surprises every member at once, so this spikes before disagreement
+        (which only measures where members differ) moves."""
+        x_t = torch.from_numpy(x.astype(np.float32)).unsqueeze(0)
+        y_t = torch.from_numpy(y.astype(np.float32)).unsqueeze(0)
+        log_probs = []
+        for model in self.members:
+            mu, log_std = model(x_t, y_t)
+            residual = (y_t - mu) * torch.exp(-log_std)
+            log_probs.append(
+                (-0.5 * residual**2 - log_std - 0.5 * np.log(2.0 * np.pi)).sum()
+            )
+        mix = torch.logsumexp(torch.stack(log_probs), dim=0) - np.log(len(self.members))
+        return float(-mix)
 
     def disagreement(self, x: np.ndarray) -> float:
         """Std of member mean rollouts, averaged over hours — an OOD signal."""

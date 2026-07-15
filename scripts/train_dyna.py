@@ -21,12 +21,12 @@ Usage:
 import argparse
 from pathlib import Path
 
-import numpy as np
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.env_util import make_vec_env
 
 from energy_storage import BatteryArbitrageEnv, EnvConfig
+from energy_storage.adaptation import planner_transitions, seed_replay_buffer
 from energy_storage.baselines import (
     evaluate,
     heuristic_policy,
@@ -36,7 +36,7 @@ from energy_storage.baselines import (
 from energy_storage.env import default_market_config
 from energy_storage.market_history import MarketHistory, ReplayedMarket
 from energy_storage.market_model import LearnedMarket, MarketModelEnsemble
-from energy_storage.oracle import RollingHorizonOracle, evaluate_hindsight
+from energy_storage.oracle import evaluate_hindsight
 
 
 def make_env_fn(config: EnvConfig):
@@ -55,41 +55,6 @@ def load_or_collect_history(path: Path, days: int, seed: int) -> MarketHistory:
     history.save(path)
     print(f"collected and wrote {path}")
     return history
-
-
-def planner_transitions(config: EnvConfig, days: int, seed0: int) -> list[tuple]:
-    """Rolling-horizon planner episodes over the stored history: the
-    real-world-legal behavior policy providing real transitions for the
-    dyna arm's replay buffer."""
-    env = BatteryArbitrageEnv(config)
-    oracle = RollingHorizonOracle()
-    episodes = max(1, days // config.episode_days)
-    transitions = []
-    for ep in range(episodes):
-        obs, _ = env.reset(seed=seed0 + ep)
-        done = False
-        while not done:
-            action = np.asarray(oracle(env, obs), dtype=np.float32).reshape(-1)
-            next_obs, reward, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
-            transitions.append((obs, next_obs, action, reward, done, truncated))
-            obs = next_obs
-    return transitions
-
-
-def seed_replay_buffer(model: SAC, transitions: list[tuple], n_envs: int) -> int:
-    usable = len(transitions) - len(transitions) % n_envs
-    for i in range(0, usable, n_envs):
-        chunk = transitions[i : i + n_envs]
-        model.replay_buffer.add(
-            obs=np.stack([t[0] for t in chunk]),
-            next_obs=np.stack([t[1] for t in chunk]),
-            action=np.stack([t[2] for t in chunk]),
-            reward=np.array([t[3] for t in chunk], dtype=np.float32),
-            done=np.array([t[4] for t in chunk], dtype=np.float32),
-            infos=[{"TimeLimit.truncated": bool(t[5])} for t in chunk],
-        )
-    return usable
 
 
 def main() -> None:

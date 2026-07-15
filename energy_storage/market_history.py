@@ -92,6 +92,24 @@ class MarketHistory:
         market = Market(config=config, seed=seed)
         return cls.from_days([market.simulate_day() for _ in range(days)])
 
+    def append_day(
+        self, day_of_year: int, is_weekend: bool, is_holiday: bool, prices: np.ndarray
+    ) -> None:
+        """Grow the history by one observed day (the adaptation stream)."""
+        self.prices = np.concatenate([self.prices, np.asarray(prices)[None, :]])
+        self.day_of_year = np.append(self.day_of_year, day_of_year)
+        self.is_weekend = np.append(self.is_weekend, is_weekend)
+        self.is_holiday = np.append(self.is_holiday, is_holiday)
+
+    def tail(self, days: int) -> "MarketHistory":
+        """The most recent `days` days as an independent history."""
+        return MarketHistory(
+            prices=self.prices[-days:].copy(),
+            day_of_year=self.day_of_year[-days:].copy(),
+            is_weekend=self.is_weekend[-days:].copy(),
+            is_holiday=self.is_holiday[-days:].copy(),
+        )
+
     def save(self, path: Path | str) -> None:
         np.savez(
             path,
