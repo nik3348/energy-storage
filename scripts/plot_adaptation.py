@@ -48,14 +48,26 @@ def rolling_sum(values: np.ndarray, window: int) -> np.ndarray:
     return np.convolve(values, np.ones(window), mode="valid")
 
 
+MIN_ORACLE_WINDOW = 5.0  # $; calm-week oracle nets are often <$1 — ratios there are noise
+
+
 def capture_curve(arm_net: np.ndarray, oracle_net: np.ndarray) -> np.ndarray:
     """Windowed capture; day i of the result is the window ending on day
     i + WINDOW - 1 of the stream."""
     denominator = rolling_sum(oracle_net, WINDOW)
     curve = rolling_sum(arm_net, WINDOW) / np.where(
-        np.abs(denominator) < 1e-9, np.nan, denominator
+        np.abs(denominator) < MIN_ORACLE_WINDOW, np.nan, denominator
     )
     return curve
+
+
+def pooled_capture_curve(arm_nets: list[np.ndarray], oracle_nets: list[np.ndarray]) -> np.ndarray:
+    """Ratio of sums across seeds (not mean of per-seed ratios): a stable
+    estimator when individual oracle windows are near zero."""
+    n = min(map(len, arm_nets + oracle_nets))
+    numerator = rolling_sum(np.sum([a[:n] for a in arm_nets], axis=0), WINDOW)
+    denominator = rolling_sum(np.sum([o[:n] for o in oracle_nets], axis=0), WINDOW)
+    return numerator / np.where(np.abs(denominator) < MIN_ORACLE_WINDOW, np.nan, denominator)
 
 
 def recovery_lag(capture: np.ndarray, pre_days: int) -> float:
@@ -98,39 +110,39 @@ def main() -> None:
     print("-" * len(header))
 
     for arm, seeds in sorted(runs.items()):
-        curves, lags, regrets, pre_caps, post_caps = [], [], [], [], []
+        curves, regrets, arm_nets, oracle_nets = [], [], [], []
         for seed, columns in seeds.items():
             if seed not in oracle:
                 print(f"  (skipping {arm} seed {seed}: no paired oracle run)")
                 continue
             oracle_net = oracle[seed]["net"]
             n = min(len(columns["net"]), len(oracle_net))
-            curve = capture_curve(columns["net"][:n], oracle_net[:n])
-            curves.append(curve)
-            lags.append(recovery_lag(curve, args.pre_days))
+            curves.append(capture_curve(columns["net"][:n], oracle_net[:n]))
             regrets.append(float(np.sum(oracle_net[t_shift:n] - columns["net"][t_shift:n])))
-            pre_caps.append(np.nanmean(curve[: args.pre_days - WINDOW + 1]))
-            post_caps.append(np.nanmean(curve[args.pre_days :]))
+            arm_nets.append(columns["net"][:n])
+            oracle_nets.append(oracle_net[:n])
         if not curves:
             continue
-        n = min(map(len, curves))
+        # Pooled (ratio-of-sums) curve is the headline: per-seed ratios blow up
+        # whenever a seed's own calm-week oracle net is near zero.
+        pooled = pooled_capture_curve(arm_nets, oracle_nets)
+        n = min(min(map(len, curves)), len(pooled))
         stack = np.stack([c[:n] for c in curves])
         days = np.arange(n) + WINDOW - 1  # window end day
-        mean = np.nanmean(stack, axis=0)
         color = ARM_COLORS.get(arm, SECONDARY)
-        ax.plot(days, mean, color=color, linewidth=2, label=arm)
+        ax.plot(days, pooled[:n], color=color, linewidth=2, label=arm)
         if len(stack) > 1:
             sem = np.nanstd(stack, axis=0) / np.sqrt(len(stack))
-            ax.fill_between(days, mean - sem, mean + sem, color=color, alpha=0.15, linewidth=0)
+            ax.fill_between(
+                days, pooled[:n] - sem, pooled[:n] + sem, color=color, alpha=0.15, linewidth=0
+            )
 
-        finite = [l for l in lags if np.isfinite(l)]
-        lag_txt = (
-            f"{np.mean(finite):.1f}d" + (f" ({len(lags) - len(finite)} never)" if len(finite) < len(lags) else "")
-            if finite
-            else "never"
-        )
+        lag = recovery_lag(pooled, args.pre_days)
+        lag_txt = f"{lag:.0f}d" if np.isfinite(lag) else ("n/a" if np.isnan(lag) else "never")
+        pre_cap = np.nanmean(pooled[: args.pre_days - WINDOW + 1])
+        post_cap = np.nanmean(pooled[args.pre_days :])
         print(
-            f"{arm:<16} {len(curves):>5} {np.mean(pre_caps):>11.1%} {np.mean(post_caps):>12.1%} "
+            f"{arm:<16} {len(curves):>5} {pre_cap:>11.1%} {post_cap:>12.1%} "
             f"{lag_txt:>13} {np.mean(regrets):>8.2f}"
         )
 
