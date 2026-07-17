@@ -1,0 +1,380 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage[authoryear,round]{natbib}
+\usepackage{hyperref}
+\usepackage{pifont}
+\usepackage{lmodern}
+\usepackage{microtype}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue
+}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.8\baselineskip}
+
+% Placeholder for numbers still being produced.
+\newcommand{\pending}[1]{\textbf{[PENDING: #1]}}
+
+\title{\textbf{Adapting to Electricity Market Regime Shifts: Model-Based Reinforcement Learning for Battery Storage Arbitrage with a Validated Learned Market Model}}
+\author{Nicholas Lai Jin Yung\\
+  MSc Artificial Intelligence\\
+Queen Mary University of London}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+  Grid-scale battery energy storage earns revenue through electricity-price arbitrage, but any controller tuned on historical prices must eventually face a market regime it was not trained on --- as European operators discovered abruptly in 2022, when gas prices moved far outside every historical distribution. This dissertation asks how a reinforcement-learning storage controller should be built so that it can adapt \emph{rapidly} to such persistent regime shifts, and answers it by exploiting a structural property of the problem: a battery small relative to the grid is a \emph{price-taker}, so its environment decomposes into battery dynamics that are known exactly and an exogenous market price process that must be learned --- and, crucially, that is observed for free, one day per day, regardless of what the policy does. The world model is therefore not a joint state-action transition model but a generative model of daily 24-hour price vectors: an ensemble of hour-autoregressive recurrent networks, admitted into policy training only after passing a statistical validation gate against held-out market data (flat diagonal-Gaussian architectures fail this gate, a documented negative result). A Soft Actor-Critic agent trains Dyna-style inside this learned market, with its replay buffer seeded by dynamic-programming planner demonstrations on the stored real days, so the physical asset never sees an untrained exploratory action. Three experiments build the argument. First, a sample-efficiency study under an explicit real-data budget shows the learned-model agent substantially outperforms both online training and a replay-only control at equal data, and identifies the budget below which the market model fails validation. Second, a zero-shot robustness study under unseen transient shocks (cold snaps, fuel spikes, plant outages, drought, heat waves) shows the model-trained policy degrades more gracefully than its baselines --- a floor, not a solution. Third, the central experiment: a streaming deployment in which the market shifts persistently mid-run, and an adaptive agent refits the market model nightly on the freely-observed price stream and fine-tunes its policy in imagination overnight, logging the ensemble's per-day predictive likelihood as the shift-detection signal --- recovering in days what a model-free agent, bound by 24 real transitions per day, recovers in weeks or not at all. Throughout, performance is normalized by exact optimization oracles (a hindsight optimum and a rolling-horizon dynamic program over the agent's own information set), so results are reported as fractions of attainable value rather than raw dollars. All experiments run in a calibrated, fully deterministic merit-order market simulator whose regime-shift scenarios consume no randomness, enabling exact paired counterfactual evaluation.
+\end{abstract}
+
+\newpage
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+This chapter introduces the motivation for grid-scale battery storage, the technical and economic challenges of electricity arbitrage under a market that experiences unseen regime shifts, and the central claim of the dissertation.
+
+\subsection{Background and Motivation}
+
+The global transition away from fossil fuels and towards sustainable energy sources is reshaping how modern power grids are planned and operated. Renewable technologies, particularly solar and wind, are essential for decarbonisation, but they also introduce a major operational challenge because their output is intermittent \citep{iea2023etp}. In practice, renewable generation does not always align with demand. Solar and wind output can be high when demand is relatively low, while the grid may experience stress during evening peaks or periods of low wind availability.
+
+Grid-scale Battery Energy Storage Systems (BESS) provide one way to address this mismatch between generation and demand. By charging during periods of surplus generation and discharging when demand is high, batteries act as an essential energy buffer helping stabilise the grid against volatility and supporting higher levels of renewable penetration \citep{aneke2016storage}. This makes BESS an increasingly important part of future electricity systems.
+
+However, operating BESS effectively is not straightforward. The economic viability of a battery often depends on electricity price arbitrage, where the system charges when prices are low and discharges when prices are high. A policy that focuses only on short-term profit may cycle the battery aggressively, which can accelerate capacity fade and reduce its State of Health (SoH) \citep{xu2018degradation}. The long-term value of energy storage depends on control strategies that account for ageing mechanisms alongside revenue.
+
+Compounding this challenge, the battery operates in a shifting market where prices are influenced by a variety of factors creating regimes that may not have been encountered during the training of a control policy. This raises a question that goes beyond whether reinforcement learning can learn a good arbitrage policy: can the learned controller remain effective when the market shifts to a regime it has never seen?
+
+\subsection{The Problem}
+
+Reinforcement learning (RL) is a suitable framework for battery arbitrage because the problem is sequential by nature. At each timestep, the controller must decide whether to charge, discharge, or remain idle, while accounting for uncertain electricity prices and the long-term impact of degradation. This fits naturally within the Markov Decision Process (MDP) formalism. Recent work has shown that deep RL agents can learn profitable energy-storage arbitrage strategies and can outperform hand-crafted heuristics \citep{cao2020arbitrage}, while Soft Actor-Critic (SAC) is a common choice for continuous-control problems because of its off-policy learning and entropy regularisation \citep{haarnoja2018softactorcriticoffpolicymaximum}.
+
+However, applying RL to battery arbitrage is complicated by an environment that shifts under the agent. This domain presents three core challenges.
+
+\textbf{Sample inefficiency.} Model-free algorithms such as SAC learn mainly through environment interaction. In this project, one training episode represents a full year of hourly dispatch decisions, which is 8760 steps. Since many episodes may be needed before the policy converges, the number of interactions can become very large.
+
+\textbf{Constraint violations during exploration.} Exploration, particularly early in training, can produce physically infeasible actions. Examples include discharge requests that would push the State of Charge (SoC) below its lower operating limit or charge requests that would exceed the upper limit.
+
+\textbf{Market regime shifts.} Battery arbitrage depends on an exogenous market process that is itself non-stationary. Electricity prices reflect seasonal demand patterns, renewable availability, weather conditions, and fuel costs, all of which can drift gradually or shift abruptly. A policy calibrated to one regime can encounter very different price spreads and cycling incentives after such a shift.
+
+Together, these challenges motivate a control approach that can learn from few real market days, never explores untrained on the physical system, and adapts to persistent regime shifts at a speed set by days of observation rather than weeks of on-asset fine-tuning.
+
+\subsection{Proposed Solution}
+
+The objective is fixed from the beginning as maximizing arbitrage profit net of battery degradation, with wear priced at the cost of the health it consumes. What this dissertation develops is a way to keep pursuing that objective when the market changes under the agent. The proposed controller is a Dyna-style Soft Actor-Critic agent that trains inside a learned world model of the market, and rapid adaptation follows from refitting the market ensemble. Each night the agent refits the ensemble on the newly observed prices and relearns its policy in imagination. The ensemble's predictive likelihood on each incoming day is recorded as the shift-detection signal.
+ 
+The design rests on one structural observation. A battery operating as a price-taker faces two distinct domains: a deterministic physical system and a stochastic market environment. We decompose the world model accordingly:
+
+\begin{itemize}
+\item \textbf{The asset physics are known and deterministic.} The State of Charge (SoC) and State of Health (SoH) evolve through well understood electrochemistry, including round-trip efficiency, throughput-based cycling degradation, and calendar ageing. Nothing here needs to be learned.
+\item \textbf{Only the market is stochastic and learned.} Rather than trying to model complex grid-level market drivers, the agent only requires a generative model of 24-hour price vectors. We implement this as an ensemble of hour-autoregressive recurrent networks conditioned on calendar features and historical prices.
+\end{itemize}
+
+This decomposition means only the market half ever needs to adapt, while the battery half remains fixed. It also sets the data economics of adaptation. A model-free agent gathers at most 24 real transitions per day, no matter how urgently its policy needs updating. The generative model turns those same 24 observed prices into unlimited imagined training days overnight, so the effective sample rate is bounded by compute rather than by the calendar.
+
+\subsection{Dissertation Hypothesis and Research Contributions}
+\label{sec:contributions}
+
+The dissertation investigates a core hypothesis:
+
+\begin{quote}
+\textit{For a price-taking storage asset, a Dyna-style RL agent whose world model is a generative model of daily market prices, with battery degradation modelled exactly, can attempt to maximise arbitrage profit net of degradation using far less real market data than model-free training, and can adapt to persistent market regime shifts within days by refitting the price model on newly observed days and updating the policy in imagination.}
+\end{quote}
+
+We investigate this hypothesis through five research contributions. The fifth is the central one; the first four build up to it.
+
+\begin{enumerate}
+\item \textbf{A calibrated, oracle-benchmarked evaluation substrate.} We develop a simulator that couples a dual-pathway lithium-ion battery degradation model (cycling and calendar ageing) with a synthetic merit-order market. By keeping the simulator deterministic outside of explicitly modeled regime-shift windows, we can evaluate dispatch strategies against exact optimization oracles (including rolling-horizon dynamic programming) and report performance as a fraction of the maximum attainable, degradation-adjusted profit.
+
+\item \textbf{Decoupled world modeling with a pre-training validation gate.} We enforce a structural boundary: battery physics are coded exactly, while a generative market model captures price uncertainty. Before any policy training, a statistical gate scores the model's synthetic years on the same calibration statistics the simulator itself must satisfy (price level, seasonal premium, intraday shape, scarcity and negative-price frequencies) together with daily-spread fidelity against a held-out real year. Only a passing model is admitted into policy training. We document which architectures fail the gate and why, including diagonal-Gaussian price models that must explain scarcity blocks as independent fat per-hour tails.
+
+\item \textbf{Sample-efficient training under strict real-data budgets.} We analyze how much observed market data is required to train a profitable dispatch policy. By training every arm on exactly the same budget of real days, we identify the threshold at which the learned market model becomes reliable enough to plan with, and we separate the value of the generative model from the value of extra gradient updates using a replay-only control alongside the model-free baseline.
+
+\item \textbf{Zero-shot robustness to unseen transient shocks.} We freeze the trained policies and subject them to out-of-distribution market events (fuel-price spikes, cold snaps, plant outages, drought, heat waves). This measures how gracefully profit capture degrades, relative to the oracle on the same shocked days, and establishes the floor that adaptation then builds on.
+
+\item \textbf{Rapid adaptation to persistent market regime shifts (the central contribution).} We demonstrate a continuous deployment protocol in which the market shifts persistently mid-run. The agent fine-tunes the generative market model nightly on the newly observed price stream and updates its policy overnight in imagination, all off-asset; the price ensemble's per-day predictive likelihood is reported as the shift-detection signal. We measure recovery speed and cumulative regret against an instantly-adapting oracle, and against frozen and model-free online fine-tuning baselines bound to the real data rate of 24 transitions per day.
+\end{enumerate}
+
+\section{Related Work}
+\label{sec:related-work}
+
+This chapter positions the dissertation within work on RL for battery arbitrage, model-based RL, and non-stationarity in reinforcement learning.
+
+\subsection{Reinforcement Learning for Battery Arbitrage}
+
+The application of RL to electricity market bidding and battery dispatch has attracted growing attention. Early work by \citet{cao2020arbitrage} demonstrated that deep Q-networks could learn profitable day-ahead bidding strategies, outperforming linear-programming baselines under price uncertainty. Subsequent studies have applied policy-gradient methods, such as Proximal Policy Optimization (PPO), and off-policy actor-critic architectures, such as Soft Actor-Critic (SAC), for real-time arbitrage. Among these, SAC has emerged as a strong default choice for continuous-action energy control problems due to its entropy regularisation and off-policy sample reuse \citep{haarnoja2018softactorcriticoffpolicymaximum}.
+
+A central focus within this literature is the persistent tension between short-term profit maximisation and long-term asset preservation. While model-free controllers can be trained on reward formulations that charge for physical battery degradation, they remain vulnerable to non-stationary environments. In modern energy markets, sudden structural shifts in supply and demand can strand a policy tuned to the old regime. Under standard model-free paradigms, adapting to a new regime requires extensive online retraining --- a process rate-limited by the market itself, which yields only 24 real hourly transitions per day, and during which the agent may execute suboptimal or physically damaging cycles on the asset. This dissertation studies robustness and adaptation to such shifts as its central question, rather than as an afterthought to a stationary benchmark.
+
+\subsection{Model-Based Reinforcement Learning and World Models}
+
+Model-based RL (MBRL) improves sample efficiency by learning a dynamics model $\hat{f}(s, a) \to s'$ and using it to generate additional training data. The Dyna architecture \citep{sutton1991dyna} is the canonical framework: the agent updates a dynamics model from real experience and generates synthetic transitions from it to augment the replay buffer. This approach has been shown to reduce the required number of real interactions by an order of magnitude in continuous-control benchmarks \citep{janner2019mbpo, chua2018pets}.
+
+In the general setting, the quality of synthetic data is limited by model errors that \emph{compound through the agent's actions} over multi-step rollouts --- the ``model exploitation'' problem --- motivating short branched rollouts from probabilistic ensembles \citep{janner2019mbpo} and uncertainty-aware planning \citep{chua2018pets}. A structural point of this dissertation is that the price-taker decomposition removes this failure mode: the learned process (daily prices) is exogenous, so the policy's actions cannot steer the model into self-confirming error. What remains is a pure distribution-matching requirement --- generated days must be statistically indistinguishable from real ones --- which is why this work replaces rollout-length control with an explicit pre-training validation gate on the generative model, and why full-day (24-step) generation is safe where general MBRL must truncate.
+
+World-model approaches such as Dreamer \citep{hafner2020dreamer} learn latent dynamics and plan entirely in imagination. While powerful, these methods introduce substantial architectural complexity and are harder to interpret in safety-critical energy applications. The approach taken here retains a directly inspectable decomposition: exact battery physics plus a small generative model of prices whose fidelity is measured against held-out data before it is ever trusted.
+
+\subsection{Non-Stationarity and Adaptation in Reinforcement Learning}
+
+Reinforcement learning under non-stationary dynamics has been studied as worst-case planning over regime changes \citep{lecarpentier2019nonstationary}, as a continual-learning problem balancing plasticity against forgetting \citep{khetarpal2022continualrl}, and surveyed more broadly by \citet{padakandla2021survey}; the supervised-learning literature on concept drift \citep{gama2014conceptdrift} contributes the detect-then-adapt pattern this work follows. The setting here is distinctive in two respects. First, the non-stationary component is \emph{exogenous and fully observed}: every day the market publishes the very quantity the model must track, so adaptation data accrues at a fixed rate for free, independent of the policy. Second, the asset constraint forbids on-policy re-exploration, so adaptation must run off-asset --- refit the small market model, retrain in imagination, deploy tomorrow. The dissertation's adaptation experiment measures how much this structure is worth relative to model-free online fine-tuning bound to the real stream.
+
+\section{Synthetic Merit-Order Market Simulator}
+\label{sec:simulator}
+
+This chapter documents the synthetic market simulator (\texttt{energy\_storage/market/}).
+
+\subsection{Justification for Synthetic Data}
+
+Explain why a synthetic, fully observable simulator is used: controlled experimentation, seeded reproducibility, unlimited paired evaluation episodes, and --- decisive for this dissertation --- regime-shift scenarios that consume no randomness, so a shifted run and its calm same-seed counterfactual are bit-identical outside the shock window. Real historical data cannot provide on-demand, repeatable regime shifts with a known counterfactual. The synthetic setting also makes the evaluation itself stronger: the hindsight optimum and the rolling-horizon oracle are exactly computable, so every policy can be scored as a fraction of the value actually attainable on the same days, a normalisation no real price history can offer. Note the trade-off explicitly: the simulator is a controlled testbed, so the claims this dissertation defends are orderings and mechanisms established within it, not absolute profit levels, and no claims transfer to real markets without validation against measured data (Section~\ref{sec:limitations}).
+
+\subsection{Exogenous Drivers}
+
+Detail the causal driver layer: a calendar (day-of-year, weekends, holidays), Ornstein--Uhlenbeck weather processes (temperature, wind, irradiance proxies), and an OU fuel market (gas and coal prices). Price formation is causal --- shocks perturb drivers, never prices directly --- so every price movement has an economic mechanism behind it.
+
+\subsection{Demand}
+
+Explain the heating-dominated European demand profile: a seasonal base load that is U-shaped over the year, with the heating peak midwinter and only modest summer cooling load. Daily shape, weekend, and holiday overlays. This consumption pattern, pushed through a sloped merit order, is what produces the winter price premium --- the premium \emph{emerges} from demand meeting the supply curve rather than being painted onto prices.
+
+\subsection{The Generator Fleet}
+
+Describe the fleet: solar (500\,MW, the duck-curve driver), wind, must-run geothermal, a reservoir hydro plant that bids its opportunity cost as a function of reservoir fill (self-stabilising), and a deliberately granular thermal fleet --- two coal units with minimum-run blocks and nine gas units spanning efficient CCGTs through old OCGT peakers. The granularity is the point: units of varying efficiency make the merit order slope, so seasonal demand moves the marginal cost. Negative prices emerge from subsidy-style negative renewable bids, coal min-run blocks, and must-run geothermal (mostly sunny summer middays); scarcity hours clear at the price cap and concentrate in winter/early spring where high demand coincides with outages and low renewables.
+
+\subsection{Market Clearing}
+
+Describe the uniform-price merit-order auction cleared hourly: each generator submits (price, quantity) offers, the clearing intersects the supply curve with demand, and all dispatched capacity is paid the marginal price. One simulated day yields 24 prices plus dispatch by technology.
+
+\subsection{Calibration}
+
+Summarise the statistical calibration gate enforced by the test suite over a seeded simulated year: median price $\approx\$64$/MWh; winter median exceeds summer median by more than \$6 and winter mean exceeds summer mean by more than \$15 (the consumption-driven European premium; windy winter nights cap the median gap); evening peak above overnight; scarcity below 1.5\% of hours; negative prices rare but present. These tests are the contract that the market has not drifted when any fleet or weather parameter changes.
+
+\subsection{Regime-Shift Scenarios}
+\label{sec:regime-scenarios}
+
+Define the five scenario types (\texttt{market/scenarios.py}): \emph{ColdSnap} (heating-demand surge), \emph{HeatWave} (cooling demand plus thermal derating), \emph{FuelShock} (multiplicative gas-price step), \emph{Drought} (reservoir inflow collapse), and \emph{PlantOutage} (a named unit removed from the fleet). Scenarios perturb \emph{drivers} inside a day window --- never prices --- and consume no randomness, so the same seed with and without a scenario differs only through the shock's causal consequences. The same scenario machinery serves both experimental roles: short windows give the unseen \emph{transient shocks} of the robustness study (Section~\ref{sec:setup-robustness}), and windows extended to the end of the run give the \emph{persistent regime shifts} of the adaptation study (Section~\ref{sec:setup-adaptation}).
+
+\section{Problem Formulation: The Arbitrage MDP}
+\label{sec:problem-formulation}
+
+This chapter formalises the battery arbitrage task as an MDP (\texttt{energy\_storage/battery.py}, \texttt{energy\_storage/env.py}).
+
+\subsection{Battery Physics}
+\label{sec:battery}
+
+The battery (100\,kWh, 50\,kW, 90\% round-trip efficiency split evenly between charge and discharge) tracks two states: SoC, expressed as a fraction of the \emph{current degraded} capacity $C_{\mathrm{eff}} = C_{\mathrm{nom}} \cdot \mathrm{SoH}$, and SoH, which declines through two mechanisms:
+\[
+  \Delta\mathrm{SoH}_{\mathrm{cyc}} = E_{\mathrm{thru}} \cdot \kappa_{\mathrm{cyc}} \cdot \Bigl(1 + s \cdot \tfrac{|P|}{P_{\max}}\Bigr), \qquad
+  \Delta\mathrm{SoH}_{\mathrm{cal}} = \kappa_{\mathrm{cal}} \cdot \bigl(0.5 + \overline{\mathrm{SoC}}\bigr) \cdot \Delta t,
+\]
+where $E_{\mathrm{thru}}$ is the cell-side energy throughput of the step and $\kappa_{\mathrm{cyc}}$ is calibrated so that a full cycle life (5{,}000 equivalent full cycles) at low power takes SoH from 1.0 to the end-of-life floor of 0.8. The stress factor $s$ makes high-power cycling cost more per kWh, standing in for the empirically established super-linear damage of aggressive cycling \citep{xu2018degradation}; calendar ageing ticks every hour regardless of action, calibrated to a 15-year rest life at mid SoC, and a full battery ages twice as fast as an empty one. SoH floors at 0.8 and feeds back into usable capacity; stored energy is conserved as capacity shrinks (SoC is re-expressed against the smaller capacity). Requested power is clipped to power limits and to what the SoC bounds ($[0.05, 0.95]$) allow, so every executed action is physically feasible by construction.
+
+\subsection{State Space}
+
+The observation is 32-dimensional: 8 scalars --- SoC, SoH, sine/cosine of hour-of-day, sine/cosine of day-of-year, weekend and holiday flags --- followed by the \emph{next 24 hourly day-ahead prices}, log-normalized. Giving the agent tomorrow's prices is not a simplification: day-ahead markets publish them, and the rolling-horizon oracle (Section~\ref{sec:oracles}) shows this window carries 99.9\% of the attainable value. Weather and fuel states are deliberately \emph{not} observed: they influence reward only through prices, which are already known exactly over the decision-relevant horizon.
+
+\subsection{Action Space}
+
+A single continuous action $a \in [-1, 1]$ maps to a power command $a \cdot P_{\max}$: positive charges, negative discharges, zero idles. Infeasible commands are clipped by the physics (Section~\ref{sec:battery}) rather than penalised, so the policy cannot damage the battery by violating operating limits --- degradation, not infeasibility, is the cost channel.
+
+\subsection{Reward}
+\label{sec:reward}
+
+The reward monetizes degradation at replacement value rather than weighting it by a free parameter:
+\[
+  r_t = \bigl(\pi_t - \Delta\mathrm{SoH}_t \cdot c_{\mathrm{repl}} \cdot C_{\mathrm{nom}}\bigr) \cdot \sigma,
+\]
+where $\pi_t$ is the arbitrage cash flow of the hour (buying energy at the cleared price when charging, selling when discharging, with conversion losses applied on each side), $\Delta\mathrm{SoH}_t$ is the health lost this step from both ageing pathways, $c_{\mathrm{repl}} = \$250$/kWh is the replacement cost, and $\sigma$ is a fixed reward scale. There is deliberately no tunable degradation weight: wear is priced at what it costs to buy back, so ``profit net of degradation'' is a single economically meaningful objective and every policy in the evaluation optimises the same dollars. Calendar ageing makes doing nothing strictly costly --- an idle policy loses money --- which anchors the low end of the benchmark ladder.
+
+\subsection{Episodes and Units}
+
+Episodes are 14 days (336 hourly steps) with randomised initial SoC and SoH and a burn-in of simulated days so weather and fuel states decorrelate from their initial values. The market operates in MW/MWh, the battery in kW/kWh; settlement converts between them.
+
+\section{Methodology}
+\label{sec:methodology}
+
+This chapter describes the oracles and baselines, the learned market model and its validation gate, the Dyna training procedure, and the adaptation loop (\texttt{energy\_storage/oracle.py}, \texttt{market\_model.py}, \texttt{market\_history.py}, \texttt{adaptation.py}).
+
+\subsection{Oracles and Baselines}
+\label{sec:oracles}
+
+Four reference policies anchor every result:
+
+\begin{itemize}
+\item \textbf{Hindsight optimum}: an exact dynamic program over a discretised SoC grid, planned against the full episode's realised prices. Valid as an upper bound precisely because the battery is a price-taker --- the plan cannot move the prices it optimises against. Defines 100\% of attainable value.
+\item \textbf{Rolling-horizon oracle}: the same dynamic program restricted to the agent's exact information set --- the next 24 known prices --- replanned every hour. It attains 99.9\% of hindsight, establishing that the observation window is near-sufficient and that any learned policy's gap is a learning deficit, not an information deficit. Its planner economics are pinned to the battery physics by a test, so ``optimal'' means optimal against the true dynamics. In the adaptation experiment it doubles as the \emph{instant-adaptation normalizer}, since replanning on observed prices adapts immediately by construction.
+\item \textbf{Heuristic}: a price-threshold rule (charge below a low percentile of the known window, discharge above a high one) --- the trusted-operator stand-in.
+\item \textbf{Idle}: does nothing; loses money to calendar ageing, marking the floor.
+\end{itemize}
+
+Because most arbitrage value concentrates in scarcity weeks, per-episode variance across market weeks is large; all comparisons therefore use paired same-seed episodes ($\geq 20$) and are reported as percentages of the hindsight optimum rather than raw dollars.
+
+\subsection{The Learned Market Model}
+\label{sec:market-model}
+
+The world model is a generative model of one market day: 24 log-normalized hourly prices conditioned on a 7-dimensional context --- four calendar features (day-of-year phase, weekend, holiday) and three compressed statistics of the previous day's prices (log-normalized mean, min, max). Generation is \emph{hour-autoregressive}: the conditioning seeds the hidden state of a GRU, which rolls over the 24 hours, each hour's price a Gaussian conditioned on the sampled hours before it. An ensemble of $K=5$ members, each fit on a bootstrap resample of the observed days, provides epistemic uncertainty. During Dyna training, a \texttt{LearnedMarket} wrapper makes the ensemble a drop-in substitute for the real market: each imagined episode draws one member and generates day after day, feeding its own outputs back as the next day's conditioning.
+
+Two architectural negatives are documented. Flat diagonal-Gaussian day models (and a low-rank variant) fail the validation gate: with no within-day conditioning they must explain scarcity blocks --- which occupy several consecutive hours when they occur at all --- as independent fat per-hour tails, over-dispersing the daily spread. The hour-autoregressive factorisation resolves this by letting the model commit to ``a scarcity day'' once and stay on it.
+
+\subsection{The Validation Gate}
+\label{sec:validation-gate}
+
+Before any policy training, the fitted ensemble must pass a statistical gate. Synthetic years are scored on the same calibration statistics that the simulator itself is tested against, so the learned model is held to the contract the market is held to. The reference for spread fidelity is a held-out real year simulated from a seed disjoint from the training budget.
+
+The criteria cover the properties arbitrage value depends on. The synthetic median price must sit in the calibrated band. The winter premium must appear in both the median and the mean, and evening prices must clear above overnight prices. The mean daily spread must fall within 30\% of the held-out real year, which catches both over-dispersed models that invent spread and over-smooth models that erase it. Scarcity hours must remain below 1.5\% of all hours and negative-price hours must be rare but present, so a model cannot pass while under- or over-generating exactly the hours where value concentrates.
+
+A model that fails any criterion is not used --- the Dyna training script refuses to run without a gated model artifact. The gate is the price-taker replacement for rollout-length control: since errors cannot compound through actions, distributional fidelity of generated days is the whole trust question, and it is answerable \emph{before} spending any RL compute. The reference years are evaluation-harness data (in a real deployment: public price history), separate from the training budget, which controls only what the model is fit on.
+
+\subsection{Dyna Training with Planner Demonstrations}
+\label{sec:dyna-training}
+
+The Dyna agent is standard SAC trained inside the learned market, with one addition: before training, the replay buffer is seeded with transitions produced by the rolling-horizon planner acting on the $D$ stored \emph{real} days (replayed verbatim through the environment). These planner demonstrations play the role of the trusted operational controller's logs: they inject real-market transitions and competent behaviour into the buffer without the policy ever acting on the real system untrained. All subsequent exploration happens in imagination. Checkpoint selection during training uses only the arm's own data source; the real simulator is touched exclusively by the final held-out evaluation.
+
+\subsection{The Adaptation Loop}
+\label{sec:adaptation-loop}
+
+The central mechanism (\texttt{energy\_storage/adaptation.py}). The agent is deployed in a streaming protocol: one real market day at a time, with an end-of-day hook where adaptation runs. Nightly, the adaptive agent:
+
+\begin{enumerate}
+\item \textbf{Observes and appends} the day's 24 published prices to its history --- data that arrives free, regardless of policy.
+\item \textbf{Detects}: computes the exact chain-rule negative log-likelihood of the observed day under the ensemble mixture. A regime shift surprises all members at once, so per-day NLL is a sharper signal than ensemble disagreement; the trace of this quantity over the deployment is itself a reported result. (Phase 1 adapts every night unconditionally; an NLL-triggered variant is the compute-saving refinement.)
+\item \textbf{Refits the market model}: fine-tunes each ensemble member from its current weights on a trailing window of observed days (90 days) plus a fixed set of pre-deployment anchor days against catastrophic forgetting --- deliberately \emph{not} refit from scratch, because pre-shift structure (diurnal shape, calendar effects) still holds and must persist. Bootstrap resampling per member preserves ensemble diversity.
+\item \textbf{Refreshes demonstrations}: runs the rolling-horizon planner on the last 7 \emph{real} (shifted) days and seeds those transitions into a small replay buffer, so the policy update is anchored to real shifted behaviour, not only to imagination.
+\item \textbf{Fine-tunes the policy in imagination}: continues SAC from current weights for a fixed number of steps inside the updated learned market (the imagination environment holds the ensemble by reference, so every generated day reflects the newest weights).
+\item \textbf{Deploys tomorrow.} Every step above runs off-asset, overnight.
+\end{enumerate}
+
+The model-free counterpart --- fine-tuning SAC directly on the real stream --- is structurally bound to 24 new transitions per day; the asymmetry between these two arms is the experiment.
+
+\section{Experimental Setup}
+\label{sec:experimental-setup}
+
+Three experiments, in the order the argument needs them: sample efficiency under a data budget, zero-shot robustness, and adaptation to persistent shifts. Scripts: \texttt{scripts/train\_dyna.py}, \texttt{scripts/run\_adaptation.py}, with evaluation shared through \texttt{energy\_storage/baselines.py}.
+
+\subsection{Experiment 1: Sample Efficiency under a Real-Data Budget}
+\label{sec:setup-budget}
+
+Every arm sees exactly $D$ days of real market history and nothing else:
+
+\begin{itemize}
+\item \textbf{online}: standard SAC on the real simulator, stopped after $24 \cdot D$ environment steps --- what model-free learning extracts from the budget.
+\item \textbf{replay}: SAC trained on the $D$ stored days replayed verbatim, with unlimited gradient epochs --- the control that separates ``more gradient updates'' from ``a generative model''.
+\item \textbf{dyna}: SAC in the learned market fitted to the same $D$ days (gate-permitting), replay buffer seeded with planner demonstrations on those days (Section~\ref{sec:dyna-training}).
+\end{itemize}
+
+All arms share the identical held-out evaluation: 20 paired 14-day episodes on the real simulator, reported as \% of the hindsight optimum. The sweep over $D$ maps both policy performance and gate pass/fail as functions of data volume. An \emph{unlimited-data} SAC reference (trained far beyond any budget) marks the model-free ceiling.
+
+\subsection{Experiment 2: Zero-Shot Robustness to Transient Shocks}
+\label{sec:setup-robustness}
+
+The frozen budget-trained policies are evaluated under the five scenario types of Section~\ref{sec:regime-scenarios} applied as transient windows inside evaluation episodes --- regimes never seen in training. Because scenarios consume no randomness, each shocked episode is paired with its calm same-seed counterfactual, isolating the shock's effect exactly. The question is not whether performance drops (it does, for everything) but how gracefully each training regime degrades relative to the oracle on the same shocked days.
+
+\subsection{Experiment 3: Adaptation to Persistent Regime Shifts}
+\label{sec:setup-adaptation}
+
+One deployment = one continuous 120-day market run: 30 calm days establish each arm's baseline, then a persistent shift begins at day $T=30$ and lasts to the end. Three shifts, chosen to span level versus structural change:
+
+\begin{itemize}
+\item \textbf{fuel-step}: gas price doubles ($\times 2$) indefinitely --- a pure price-\emph{level} shift the observation window itself largely conveys; frozen policies should cope best here.
+\item \textbf{capacity-loss}: permanent outage of the cheap 100\,MW baseload coal unit (with its min-run block) --- a \emph{structural} reshape of the merit order that changes when scarcity and negative prices happen, not just how high prices sit.
+\item \textbf{cold-regime}: a lasting heating-demand elevation --- a demand-level plus seasonal-pattern shift.
+\end{itemize}
+
+Arms: the \textbf{frozen} dyna and unlimited-data policies (never updated), \textbf{online-ft} (the unlimited-data policy fine-tuning on the real stream at 24 transitions/day), \textbf{adaptive-dyna} (the full nightly loop of Section~\ref{sec:adaptation-loop}), and the \textbf{heuristic}. All arms and the rolling-horizon \textbf{oracle} run on identical paired seeds --- prices are exogenous, so arms sharing a seed see the same market.
+
+Metrics, all normalized by the oracle on the same seed (the oracle replans on observed prices, so it adapts instantly by construction --- the fair ``instant adaptation'' ceiling):
+\begin{itemize}
+\item \textbf{capture}$(t)$ = 7-day-windowed policy net profit / oracle net profit --- fraction of the instantly-adapted optimum retained;
+\item \textbf{recovery lag} --- days after $T$ until capture regains 90\% of the arm's \emph{own} pre-shift level;
+\item \textbf{cumulative regret} --- summed post-shift shortfall versus the oracle, in dollars;
+\item \textbf{detection trace} --- the adaptive arm's per-day NLL before and after each nightly fine-tune, showing whether and when the model noticed the shift.
+\end{itemize}
+
+Hypotheses stated in advance: adaptive-dyna recovers in days while online-ft takes weeks-to-never within the 90-day horizon; frozen arms roughly cope with the pure level shift (the price window carries it) but never fully recover on structural shifts; the NLL trace spikes within days of $T$; and the adaptive arm's advantage is largest on capacity-loss and smallest on fuel-step, mirroring how much of each shift the observation already conveys.
+
+\subsection{Hyperparameters, Seeds, and Reporting}
+\label{sec:reporting}
+
+Detail: SAC hyperparameters (SB3 defaults with budget-scaled warmup), ensemble size $K=5$, GRU hidden width, fine-tune epochs/learning rate, adaptation window and anchor sizes, imagined steps per night. Evaluation uses $\geq 20$ paired episodes (budget/robustness) and $\geq 10$ paired deployments per shift (adaptation; fewer for the expensive adaptive arm, stated where so).
+
+Dollar magnitudes scale with the simulator's price cap because most arbitrage value is scarcity capture. This sensitivity was measured rather than assumed: the hindsight optimum is roughly $+\$90$ per 14-day episode at a \$3000/MWh cap and $+\$28$ at \$1000, and at \$200 the heuristic falls below idle because spread arbitrage alone no longer pays for the cycling it costs. The cap is fixed at \$1000/MWh for all experiments, chosen so the benchmark ladder stays strictly ordered and evaluation variance stays manageable, and every headline number is a fraction of the oracle or hindsight optimum on the same seeds, which removes the mechanical level scaling. The learned-policy comparisons are run at this single cap; Section~\ref{sec:limitations} states what is and is not claimed as a result.
+
+\section{Results and Discussion}
+\label{sec:results-discussion}
+
+\emph{[Adaptation runs are in progress on a separate machine; this chapter currently carries the settled budget and robustness numbers and placeholders for the rest. All quoted percentages are of the hindsight optimum on the real simulator, 20 paired 14-day episodes, unless stated otherwise.]}
+
+\subsection{Oracle Ladder and Attainable Value}
+\label{sec:results-ladder}
+
+Establish the benchmark ladder on the real market: hindsight optimum $\approx +\$28$ per 14-day episode ($\equiv 100\%$), rolling-horizon oracle 99.9\% (the 24-hour window is near-sufficient information), heuristic slightly net-negative (over-cycles; above idle but degradation-adjusted losses), idle $\approx -\$13$ (calendar ageing is unavoidable). This ladder frames every learned result.
+
+\subsection{The Validation Gate and the Data Threshold}
+\label{sec:results-gate}
+
+Report gate outcomes as a function of budget $D$ and architecture: which statistics each configuration passes, and the mechanism behind each failure (the diagonal-Gaussian architecture over-disperses the daily spread; the hour-autoregressive ensemble passes at $D=365$ but fails at smaller budgets, locating the data threshold below which the learned market should not be trusted). \pending{final gate tables across budgets and architectures}
+
+\subsection{Sample Efficiency under the Budget}
+\label{sec:results-budget}
+
+At $D=365$: the dyna arm reaches $\approx 71\%$ of hindsight, versus $\approx 39$--$54\%$ for the replay control on identical data and gradient budget --- the generative model, not extra gradient steps, carries the gap. The unlimited-data model-free reference reaches $\approx 72.5\%$, so one year of real data through the learned market recovers nearly the model-free ceiling. \pending{full sweep figure across budgets; confirm final numbers from the re-run}
+
+\subsection{Zero-Shot Robustness}
+\label{sec:results-robustness}
+
+Report frozen-policy capture under the five transient shocks: dyna-365 retains roughly 64--89\% depending on shock type, with its margin over the replay control roughly doubling under shift; notably, the unlimited-data baseline scores \emph{below} dyna-365 under the fuel shock ($\approx 56\%$ vs $\approx 64\%$) --- more calm-regime data does not buy shift robustness, which is the motivation for adaptation rather than ``train longer''. \pending{per-scenario table and discussion of which shocks hurt most and why}
+
+\subsection{Adaptation to Persistent Shifts (Central Result)}
+\label{sec:results-adaptation}
+
+\pending{capture curves per shift with the oracle normalizer; recovery-lag and cumulative-regret table across arms; detection trace showing per-day NLL spiking at $T$ and relaxing as the nightly fine-tune absorbs the new regime. Runs in progress.}
+
+Structure the discussion around the pre-registered hypotheses of Section~\ref{sec:setup-adaptation}: which held, which did not, and what the failure modes were. One qualitative observation already established: under the fuel shock the \emph{oracle's own} post-shift profit rises (a bigger gas price means bigger spreads), which is precisely why raw profit is the wrong recovery metric and capture against the instantly-adapting oracle is the right one.
+
+\subsection{Discussion}
+
+Discuss how the results qualify the hypothesis: how much of adaptation's value comes from the market-model refit versus the policy fine-tune; whether nightly-always adaptation ever hurts (churn on calm days); what the NLL trace implies about a triggered variant; and where the price-taker decomposition's advantages (free data, no compounding, off-asset retraining) show up in the numbers versus where they do not.
+
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+
+\subsection{Summary of Findings}
+
+Reiterate the three-timescale account of non-stationarity the dissertation assembles: the observed 24-hour price window handles \emph{hours} (and is near-sufficient information, per the oracle); a policy trained in a validated learned market handles \emph{days} of unseen transient shock with a graceful zero-shot floor; and the nightly adaptation loop handles \emph{persistent} change, at a speed set by how fast free observations accumulate rather than by on-asset interaction. Distinguish what each experiment establishes and what remains conditional on the pending adaptation results.
+
+\subsection{Limitations}
+\label{sec:limitations}
+
+All results are obtained in simulation against a synthetic market and battery; the simulator is a controlled testbed, and no claims are made about transfer to a real deployment without validation against measured price and cell data. The price-taker assumption is load-bearing twice over --- it licenses both the decomposed world model and the hindsight oracle --- and would weaken for storage large enough to move prices. The persistent-shift evaluation covers three discrete, hand-specified regimes rather than a continuum or compound/gradual drift. The rolling-horizon normalizer adapts instantly only because prices are fully observed day-ahead; in a forecast-based market the ceiling itself would lag. Budget-experiment policies derive from a single training seed (evaluation is multi-seed and paired).
+
+All quantitative results are further conditional on a single parameterisation of the world: one European heating-dominated market calibration, one price cap (\$1000/MWh), and one battery cost model (\$250/kWh replacement, 5{,}000-cycle life). The cap dependence is measured and disclosed (Section~\ref{sec:reporting}): raw dollars scale with the cap because scarcity capture dominates arbitrage value, and the benchmark ladder stays ordered from \$200 to \$3000 apart from the heuristic falling below idle at the low cap. The learned-policy comparisons were not repeated at other caps, other market calibrations, or other degradation prices, so the \emph{sizes} of the reported gaps should be read as specific to this parameterisation. The claims the dissertation defends are the orderings and the mechanisms behind them: a validated generative model turns a fixed budget of observed days into unlimited training experience, and free nightly observations turn into off-asset adaptation. Grid constraints such as transmission congestion, and temperature-coupled ageing beyond the SoC-dependent calendar term, are not modelled.
+
+\subsection{Future Directions}
+
+Suggest: an NLL-\emph{triggered} adaptation variant against the always-adapt default (the trigger is a compute optimisation, and quantifying when it is safe is open); a transient-shock control for the adaptive arm (adaptation should do no harm on one-day crises); an uncertainty-weighted mixing ratio between real-day replay and imagination in the nightly update; validating the simulator's shift scenarios against real market episodes such as 2022; a mixture-density day model to extend gate passes to smaller budgets; a calibrated two-sample gate whose acceptance regions derive from the market's own year-to-year variability rather than fixed bands; multiple training seeds for the budget sweep; other battery chemistries with different cycle/calendar balances; and relaxing the price-taker assumption toward price-making storage.
+
+\section*{Acknowledgements}
+\addcontentsline{toc}{section}{Acknowledgements}
+
+Optional acknowledgements can be added here.
+
+\newpage
+\bibliographystyle{apalike}
+\bibliography{references}
+
+\appendix
+
+\section{Additional Material}
+
+Extended results, hyperparameter tables, simulator validation plots, and supplementary analyses (e.g., the diagonal-Gaussian gate-failure diagnostics) can be placed here.
+
+\end{document}

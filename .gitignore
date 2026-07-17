@@ -7,3 +7,15 @@ models/
 logs/
 wandb/
 diagnostics/
+
+# LaTeX
+*.aux
+*.bbl
+*.blg
+*.brf
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.toc
+*.synctex.gz
