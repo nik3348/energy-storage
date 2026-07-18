@@ -12,6 +12,9 @@ stable-baselines3 (and the adaptive arm the torch market model) lazily, so
 this module stays importable without the 'train' extra.
 """
 
+import json
+import pickle
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -63,17 +66,96 @@ class StreamResult:
         return self.profit - self.degradation
 
 
-def run_stream(arm, config: EnvConfig, seed: int) -> StreamResult:
+def _save_env_state(env: BatteryArbitrageEnv, path: Path) -> None:
+    """Pickle exactly the mutable state simulate_day()/step() depend on —
+    never `env.config` (it can carry unpicklable factory lambdas) — so a
+    fresh env built from the caller's own config can be hydrated byte-exact.
+    Verified: replaying identical actions after restore reproduces prices
+    exactly (Market's single shared np.random.default_rng round-trips)."""
+    with open(path, "wb") as f:
+        pickle.dump(
+            {
+                "market": env.market,
+                "battery": env.battery,
+                "hour": env._hour,
+                "steps": env._steps,
+                "today": env._today,
+                "tomorrow": env._tomorrow,
+            },
+            f,
+        )
+
+
+def _load_env_state(env: BatteryArbitrageEnv, path: Path) -> np.ndarray:
+    with open(path, "rb") as f:
+        state = pickle.load(f)
+    env.market = state["market"]
+    env.battery = state["battery"]
+    env._hour = state["hour"]
+    env._steps = state["steps"]
+    env._today = state["today"]
+    env._tomorrow = state["tomorrow"]
+    return env._obs()
+
+
+def _save_progress(
+    path: Path,
+    day_index: int,
+    profits: list[float],
+    degradations: list[float],
+    extras: dict[str, list[float]],
+) -> None:
+    np.savez(
+        path,
+        day_index=day_index,
+        profits=np.asarray(profits),
+        degradations=np.asarray(degradations),
+        extra_keys=np.asarray(list(extras)),
+        **{f"extra__{k}": np.asarray(v) for k, v in extras.items()},
+    )
+
+
+def _load_progress(path: Path) -> tuple[int, list[float], list[float], dict[str, list[float]]]:
+    data = np.load(path)
+    extras = {k: data[f"extra__{k}"].tolist() for k in data["extra_keys"]}
+    return int(data["day_index"]), data["profits"].tolist(), data["degradations"].tolist(), extras
+
+
+def run_stream(
+    arm, config: EnvConfig, seed: int, checkpoint_dir: Path | str | None = None
+) -> StreamResult:
     """Drive one arm through a `config.episode_days`-day deployment.
 
     The arm needs `act(env, obs) -> action` and
-    `end_of_day(record) -> dict | None`."""
+    `end_of_day(record) -> dict | None`.
+
+    If `checkpoint_dir` is given, the stream saves env + accumulated results
+    after every day, plus arm-specific state for arms that implement
+    `save_checkpoint(dir)`/`load_checkpoint(dir)` (AdaptiveDynaArm,
+    OnlineFinetuneArm — the arms expensive enough that losing a partial run
+    to a crash or a killed process actually hurts). If the directory already
+    holds a checkpoint, the stream resumes from the day after the last one
+    saved instead of starting over. The checkpoint is deleted on successful
+    completion, so a later fresh run of the same (shift, arm, seed) doesn't
+    silently resume from stale state."""
     env = BatteryArbitrageEnv(config)
-    obs, _ = env.reset(seed=seed)
+    ckpt = Path(checkpoint_dir) if checkpoint_dir is not None else None
+    start_day = 0
     profits, degradations = [], []
     extras: dict[str, list[float]] = {}
+
+    if ckpt is not None and (ckpt / "progress.npz").exists():
+        obs = _load_env_state(env, ckpt / "env.pkl")
+        start_day, profits, degradations, extras = _load_progress(ckpt / "progress.npz")
+        start_day += 1
+        if hasattr(arm, "load_checkpoint"):
+            arm.load_checkpoint(ckpt / "arm")
+        print(f"resuming stream from day {start_day} ({ckpt})")
+    else:
+        obs, _ = env.reset(seed=seed)
+
     terminated = False
-    for day_index in range(config.episode_days):
+    for day_index in range(start_day, config.episode_days):
         meta = env.today
         prices, transitions = [], []
         profit = degradation = 0.0
@@ -107,8 +189,16 @@ def run_stream(arm, config: EnvConfig, seed: int) -> StreamResult:
         for key, values in extras.items():
             if len(values) < day_index + 1:
                 values.append(np.nan)
+        if ckpt is not None and not terminated:
+            ckpt.mkdir(parents=True, exist_ok=True)
+            _save_env_state(env, ckpt / "env.pkl")
+            _save_progress(ckpt / "progress.npz", day_index, profits, degradations, extras)
+            if hasattr(arm, "save_checkpoint"):
+                arm.save_checkpoint(ckpt / "arm")
         if terminated:
             break
+    if ckpt is not None:
+        shutil.rmtree(ckpt, ignore_errors=True)
     return StreamResult(
         profit=np.asarray(profits),
         degradation=np.asarray(degradations),
@@ -180,6 +270,7 @@ class OnlineFinetuneArm:
         env_config: EnvConfig,
         gradient_steps_per_night: int = 240,
         seed: int = 0,
+        device: str = "cpu",
     ):
         from stable_baselines3 import SAC
         from stable_baselines3.common.env_util import make_vec_env
@@ -190,7 +281,11 @@ class OnlineFinetuneArm:
         vec1 = make_vec_env(
             lambda: BatteryArbitrageEnv(env_config), n_envs=1, seed=seed
         )
-        self.model = SAC.load(model_path, env=vec1)
+        # device="cpu" by default: this MLP is tiny (SB3's default net_arch),
+        # so "auto" picking a shared/oversubscribed GPU only adds contention
+        # and OOM risk with no speed benefit — see docs/adaptation-design.md
+        # risk notes. Many arms run concurrently; CPU keeps them independent.
+        self.model = SAC.load(model_path, env=vec1, device=device)
         self.model.set_logger(configure(None, []))  # .train() needs a logger
         self.model.set_random_seed(seed)
         self.gradient_steps = gradient_steps_per_night
@@ -207,6 +302,22 @@ class OnlineFinetuneArm:
                 gradient_steps=self.gradient_steps, batch_size=self.model.batch_size
             )
         return {"buffer_size": float(buffer_size)}
+
+    def save_checkpoint(self, dir: Path) -> None:
+        dir = Path(dir)
+        dir.mkdir(parents=True, exist_ok=True)
+        self.model.save(dir / "sac.zip")
+        self.model.save_replay_buffer(dir / "replay_buffer.pkl")
+
+    def load_checkpoint(self, dir: Path) -> None:
+        from stable_baselines3 import SAC
+        from stable_baselines3.common.logger import configure
+
+        dir = Path(dir)
+        env = self.model.get_env()
+        self.model = SAC.load(dir / "sac.zip", env=env, device=self.model.device)
+        self.model.load_replay_buffer(dir / "replay_buffer.pkl")
+        self.model.set_logger(configure(None, []))  # .train() needs a logger
 
 
 @dataclass
@@ -240,6 +351,7 @@ class AdaptiveDynaArm:
         env_config: EnvConfig,
         config: AdaptiveDynaConfig | None = None,
         seed: int = 0,
+        device: str = "cpu",
     ):
         from stable_baselines3 import SAC
         from stable_baselines3.common.buffers import ReplayBuffer
@@ -265,7 +377,10 @@ class AdaptiveDynaArm:
         vec1 = make_vec_env(
             lambda: BatteryArbitrageEnv(imagination_config), n_envs=1, seed=seed
         )
-        self.model = SAC.load(sac_path, env=vec1)
+        # device="cpu" by default — see OnlineFinetuneArm for why "auto" is
+        # the wrong choice on a shared/oversubscribed GPU, doubly so here
+        # since 10k imagined steps/night x many seeds run concurrently.
+        self.model = SAC.load(sac_path, env=vec1, device=device)
         self.model.replay_buffer = ReplayBuffer(
             self.cfg.buffer_size,
             self.model.observation_space,
@@ -369,3 +484,48 @@ class AdaptiveDynaArm:
             progress_bar=False,
         )
         return logs
+
+    def save_checkpoint(self, dir: Path) -> None:
+        dir = Path(dir)
+        dir.mkdir(parents=True, exist_ok=True)
+        self.model.save(dir / "sac.zip")
+        self.ensemble.save(dir / "ensemble.pt")
+        self.history.save(dir / "history.npz")
+        payload = {
+            "night": self._night,
+            "seam": self._seam,
+            "prev_prices": None if self._prev_prices is None else self._prev_prices.tolist(),
+        }
+        (dir / "scalars.json").write_text(json.dumps(payload))
+
+    def load_checkpoint(self, dir: Path) -> None:
+        from stable_baselines3 import SAC
+        from stable_baselines3.common.buffers import ReplayBuffer
+
+        from energy_storage.market_model import MarketModelEnsemble
+
+        dir = Path(dir)
+        # Reuse the same vec env: its market_factory closes over `self`, so it
+        # keeps resolving self.ensemble dynamically after we reassign it below
+        # (the "imagination env holds the ensemble by reference" property).
+        env = self.model.get_env()
+        self.model = SAC.load(dir / "sac.zip", env=env, device=self.model.device)
+        # Fresh buffer, matching __init__: imagined transitions aren't real
+        # data worth persisting — they're regenerated every adapting night.
+        self.model.replay_buffer = ReplayBuffer(
+            self.cfg.buffer_size,
+            self.model.observation_space,
+            self.model.action_space,
+            device=self.model.device,
+            n_envs=1,
+        )
+        self.model.verbose = 0
+        self.model.tensorboard_log = None
+        self.ensemble = MarketModelEnsemble.load(dir / "ensemble.pt")
+        self.history = MarketHistory.load(dir / "history.npz")
+        payload = json.loads((dir / "scalars.json").read_text())
+        self._night = payload["night"]
+        self._seam = payload["seam"]
+        self._prev_prices = (
+            None if payload["prev_prices"] is None else np.asarray(payload["prev_prices"])
+        )

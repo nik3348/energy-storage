@@ -65,13 +65,14 @@ def build_arm(args: argparse.Namespace, config: EnvConfig, seed: int):
         from stable_baselines3 import SAC
 
         path = args.dyna_model if args.arm == "frozen-dyna" else args.ideal_model
-        return PolicyArm(model_policy(SAC.load(path)))
+        return PolicyArm(model_policy(SAC.load(path, device=args.device)))
     if args.arm == "online-ft":
         return OnlineFinetuneArm(
             args.ideal_model,
             config,
             gradient_steps_per_night=args.grad_steps,
             seed=seed,
+            device=args.device,
         )
     # adaptive-dyna
     return AdaptiveDynaArm(
@@ -86,6 +87,7 @@ def build_arm(args: argparse.Namespace, config: EnvConfig, seed: int):
             nll_trigger=args.nll_trigger,
         ),
         seed=seed,
+        device=args.device,
     )
 
 
@@ -122,6 +124,13 @@ def main() -> None:
     )
     parser.add_argument("--history", type=Path, default=Path("data/history-d365-s0.npz"))
     parser.add_argument("--out", type=Path, default=Path("results/adaptation"))
+    parser.add_argument(
+        "--checkpoint-dir",
+        type=Path,
+        default=Path("checkpoints/adaptation"),
+        help="per-(shift,arm,seed) nightly checkpoint for resuming a killed/crashed "
+        "run without redoing already-completed nights; deleted on completion",
+    )
     parser.add_argument("--window-days", type=int, default=90)
     parser.add_argument("--ft-epochs", type=int, default=25)
     parser.add_argument(
@@ -135,6 +144,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--grad-steps", type=int, default=240, help="online-ft: gradient steps per night"
+    )
+    parser.add_argument(
+        "--device",
+        default="cpu",
+        help="torch device for arms that load a model; cpu by default because "
+        "these are small MLPs and 'auto'/cuda only adds shared-GPU contention "
+        "risk when many seeds run concurrently",
     )
     parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=False)
     args = parser.parse_args()
@@ -162,7 +178,8 @@ def main() -> None:
     for i in range(args.seeds):
         seed = args.seed0 + i
         arm = build_arm(args, config, seed)
-        result = run_stream(arm, config, seed)
+        checkpoint_dir = args.checkpoint_dir / args.shift / f"{args.arm}-s{seed}"
+        result = run_stream(arm, config, seed, checkpoint_dir=checkpoint_dir)
         extra_keys = sorted(result.extras)
         path = out_dir / f"{args.arm}-s{seed}.csv"
         write_csv(path, result, extra_keys)

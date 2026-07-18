@@ -126,6 +126,115 @@ def test_day_nll_flags_out_of_distribution_days():
     assert out_dist > in_dist
 
 
+class _CrashAfterNDays(RecordingArm):
+    """Simulates a killed process: raises inside end_of_day after N calls,
+    after the wrapped arm has already done its (recorded) work — matching
+    where a real crash lands relative to run_stream's checkpoint write."""
+
+    def __init__(self, policy_fn, crash_after: int):
+        super().__init__(policy_fn)
+        self._crash_after = crash_after
+
+    def end_of_day(self, record):
+        logs = super().end_of_day(record)
+        if len(self.days) == self._crash_after:
+            raise RuntimeError("simulated crash")
+        return logs
+
+
+def test_run_stream_resume_reproduces_prices_and_results(tmp_path):
+    """The core resume guarantee: a crash-then-resume run must see exactly
+    the same prices (and thus results) as an uninterrupted run at the same
+    seed — paired-seed comparisons depend on this regardless of which arm
+    is running."""
+    config = _config(8)
+    baseline = run_stream(PolicyArm(heuristic_policy), config, seed=99)
+
+    ckpt_dir = tmp_path / "ckpt"
+    crasher = _CrashAfterNDays(heuristic_policy, crash_after=3)
+    with pytest.raises(RuntimeError):
+        run_stream(crasher, config, seed=99, checkpoint_dir=ckpt_dir)
+    assert (ckpt_dir / "progress.npz").exists()
+
+    resumed = run_stream(PolicyArm(heuristic_policy), config, seed=99, checkpoint_dir=ckpt_dir)
+    assert not ckpt_dir.exists()  # cleaned up on completion
+    np.testing.assert_allclose(resumed.net, baseline.net)
+    np.testing.assert_allclose(resumed.profit, baseline.profit)
+
+
+def test_adaptive_dyna_resume_after_crash_matches_prices(tmp_path):
+    """Smoke test for the expensive arm: resume must not crash, must produce
+    a complete stream, and — the invariant that actually matters for paired
+    comparisons — prices must be unaffected by the crash/resume regardless
+    of how the arm's own (stochastic) SAC fine-tuning continues."""
+    pytest.importorskip("torch")
+    sb3 = pytest.importorskip("stable_baselines3")
+    from stable_baselines3.common.env_util import make_vec_env
+
+    from energy_storage.adaptation import AdaptiveDynaArm, AdaptiveDynaConfig
+    from energy_storage.env import BatteryArbitrageEnv
+    from energy_storage.market_history import build_dataset
+    from energy_storage.market_model import MarketModelEnsemble
+
+    stream_config = _config(6)
+    sac_env = make_vec_env(
+        lambda: BatteryArbitrageEnv(stream_config), n_envs=1, seed=0
+    )
+    model = sb3.SAC(
+        "MlpPolicy", sac_env, seed=0, learning_starts=0, buffer_size=500,
+        policy_kwargs={"net_arch": [8, 8]},
+    )
+    model.learn(total_timesteps=20)
+    sac_path = tmp_path / "sac.zip"
+    model.save(sac_path)
+
+    history = MarketHistory.collect(None, seed=0, days=30)
+    x, y = build_dataset(history, cap=1000.0)
+    ensemble = MarketModelEnsemble(k=2, hidden=8, seed=0)
+    ensemble.fit(x, y, epochs=10, seed=0)
+    ensemble_path = tmp_path / "ensemble.pt"
+    ensemble.save(ensemble_path)
+
+    cfg = AdaptiveDynaConfig(
+        window_days=10, anchor_days=5, ft_epochs=2, sac_steps=20,
+        demo_days=3, buffer_size=500, imagination_episode_days=4,
+    )
+
+    def make_arm():
+        return AdaptiveDynaArm(
+            sac_path, ensemble_path, history, stream_config, cfg, seed=0
+        )
+
+    baseline = run_stream(make_arm(), stream_config, seed=123)
+
+    class CrashingAdaptiveDyna(AdaptiveDynaArm):
+        def end_of_day(self, record):
+            logs = super().end_of_day(record)
+            if record.index == 2:
+                raise RuntimeError("simulated crash")
+            return logs
+
+    ckpt_dir = tmp_path / "ckpt"
+    crasher = CrashingAdaptiveDyna(
+        sac_path, ensemble_path, history, stream_config, cfg, seed=0
+    )
+    with pytest.raises(RuntimeError):
+        run_stream(crasher, stream_config, seed=123, checkpoint_dir=ckpt_dir)
+
+    resumed_result = run_stream(
+        make_arm(), stream_config, seed=123, checkpoint_dir=ckpt_dir
+    )
+    assert not ckpt_dir.exists()
+    assert resumed_result.net.shape == baseline.net.shape == (6,)
+    # nll is a pure function of (arm-independent) prices + the fine-tuned
+    # ensemble; days 0-2 are loaded verbatim from the checkpoint, so they
+    # must match exactly regardless of what happens post-resume.
+    np.testing.assert_allclose(
+        resumed_result.extras["nll"][:3], baseline.extras["nll"][:3]
+    )
+    np.testing.assert_allclose(resumed_result.net[:3], baseline.net[:3])
+
+
 def test_build_dataset_matches_norm():
     history = MarketHistory.collect(None, seed=0, days=3)
     x, y = build_dataset(history, cap=1000.0)
