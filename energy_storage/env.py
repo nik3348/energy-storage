@@ -51,6 +51,11 @@ class EnvConfig:
     # return value must duck-type Market: `simulate_day() -> DayResult` and
     # a settable integer `day`.
     market_factory: Callable[[MarketConfig, int], Market] | None = None
+    # Optional learned-battery hook (PINN experiment, docs/pinn-battery-design.md):
+    # called at construction with the BatteryConfig instead of constructing the
+    # real Battery. The return value must duck-type Battery: `reset(soc, soh)`,
+    # mutable `soc`/`soh`, and `step(power_kw, dt_h) -> BatteryStepResult`.
+    battery_factory: Callable[[BatteryConfig], object] | None = None
 
 
 class BatteryArbitrageEnv(gym.Env):
@@ -59,7 +64,11 @@ class BatteryArbitrageEnv(gym.Env):
     def __init__(self, config: EnvConfig | None = None):
         super().__init__()
         self.config = config or EnvConfig()
-        self.battery = Battery(self.config.battery)
+        self.battery = (
+            self.config.battery_factory(self.config.battery)
+            if self.config.battery_factory is not None
+            else Battery(self.config.battery)
+        )
         self.market: Market | None = None
         self._today: DayResult | None = None
         self._tomorrow: DayResult | None = None
