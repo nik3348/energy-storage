@@ -46,6 +46,26 @@ def test_calendar_aging_faster_at_high_soc():
     assert hi_loss > lo_loss
 
 
+def test_constraint_clipped_flags_infeasible_requests():
+    cfg = BatteryConfig()
+    # Full battery asked to charge hard: the SoC bound refuses the request.
+    b = make_battery()
+    b.reset(soc=cfg.soc_max)
+    assert b.step(cfg.max_charge_kw).constraint_clipped
+    # Empty battery asked to discharge hard: same, on the floor.
+    b.reset(soc=cfg.soc_min)
+    assert b.step(-cfg.max_discharge_kw).constraint_clipped
+    # A feasible mid-SoC charge, an idle step, and charging exactly to the bound
+    # are all feasible: not flagged.
+    b.reset(soc=0.5)
+    assert not b.step(10.0).constraint_clipped
+    assert not b.step(0.0).constraint_clipped
+    b.reset(soc=0.5)
+    headroom_kwh = (cfg.soc_max - 0.5) * cfg.capacity_kwh
+    exact_power = headroom_kwh / b._one_way_eff  # charges precisely to soc_max
+    assert not b.step(exact_power).constraint_clipped
+
+
 def test_cycle_stress_penalizes_high_power():
     # Same 10 kWh of grid energy, delivered gently vs at full power.
     gentle = make_battery()

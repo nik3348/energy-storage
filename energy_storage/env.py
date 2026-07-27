@@ -178,6 +178,7 @@ class BatteryArbitrageEnv(gym.Env):
             "soh": self.battery.soh,
             "cycle_loss": result.cycle_loss,
             "calendar_loss": result.calendar_loss,
+            "constraint_clipped": result.constraint_clipped,
             "day": self._today.day,
             "hour": self._hour,
             "active_scenarios": self._today.active_scenarios,

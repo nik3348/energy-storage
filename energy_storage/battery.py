@@ -13,6 +13,14 @@ class BatteryStepResult:
     calendar_loss: float
     soc: float
     soh: float
+    # True when an SoC bound had to *materially* throttle the requested power:
+    # more than 1% of the requested energy was refused because the action asked
+    # to charge past soc_max or discharge below soc_min. The 1% floor excludes
+    # commanding exactly to a bound (optimal and feasible, e.g. a full charge)
+    # and float noise. A safe-exploration signal: an untrained policy exploring
+    # on the real asset issues such infeasible requests; a feasible controller
+    # that plans against the bounds does not.
+    constraint_clipped: bool = False
 
 
 @dataclass
@@ -85,17 +93,21 @@ class Battery:
         if power_kw >= 0.0:
             # Charging: grid energy in, losses applied before storage.
             headroom_kwh = (cfg.soc_max - self.soc) * capacity
-            stored_kwh = min(power_kw * dt_h * self._one_way_eff, headroom_kwh)
+            requested_kwh = power_kw * dt_h * self._one_way_eff
+            stored_kwh = min(requested_kwh, headroom_kwh)
             grid_energy_kwh = stored_kwh / self._one_way_eff
             self.soc += stored_kwh / capacity
             throughput_kwh = stored_kwh
+            constraint_clipped = requested_kwh > 0.0 and stored_kwh < requested_kwh * 0.99
         else:
             # Discharging: losses applied on the way out.
             available_kwh = (self.soc - cfg.soc_min) * capacity
-            drawn_kwh = min(-power_kw * dt_h / self._one_way_eff, available_kwh)
+            requested_kwh = -power_kw * dt_h / self._one_way_eff
+            drawn_kwh = min(requested_kwh, available_kwh)
             grid_energy_kwh = -drawn_kwh * self._one_way_eff
             self.soc -= drawn_kwh / capacity
             throughput_kwh = drawn_kwh
+            constraint_clipped = drawn_kwh < requested_kwh * 0.99
 
         # Cycle aging: per-kWh loss grows with how hard the battery is pushed.
         max_power = cfg.max_charge_kw if power_kw >= 0.0 else cfg.max_discharge_kw
@@ -129,4 +141,5 @@ class Battery:
             calendar_loss=calendar_loss,
             soc=self.soc,
             soh=self.soh,
+            constraint_clipped=constraint_clipped,
         )
