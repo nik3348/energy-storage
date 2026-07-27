@@ -4,10 +4,13 @@ Companion to `docs/pinn-battery-design.md`. **Headline: modelling the battery as
 a physics-informed network does not improve sample efficiency over a plain MLP
 surrogate on this problem. The battery input–output map is smooth and
 low-dimensional enough that an unconstrained MLP already learns it from a handful
-of transitions; the physics prior can match that accuracy but not beat it, and
-its soft-constraint form actively competes with the data fit on the easy
-targets. The PINN's only robust advantage is qualitative — guaranteed physical
-admissibility — not sample efficiency.** Reproduce with
+of transitions. A well-tuned soft physics residual edges the MLP only at the
+*largest* budgets (N ≥ 200) and under favourable coverage; in the low-data
+regime a PINN is supposed to own — and under realistic narrow coverage — it does
+not help and often hurts. The PINN's only unconditional advantage is qualitative:
+guaranteed physical admissibility (never a wrong-sign or free-degradation
+prediction), which the MLP violates at rates that climb to 8–15% as data thins.**
+Reproduce with
 `scripts/evaluate_battery_model.py` (→ `data/battery-model-stage1.npz`).
 
 ## What was compared
@@ -40,42 +43,64 @@ log never covered).
    multiplicative parameters fail to co-identify across the 1e5 spread in target
    scales; (c) hard admissibility only (`pinn-hard`); (d) hard admissibility +
    soft residual with a *known* capacity so the energy term is well-posed
-   (`pinn-soft`). The weight was swept λ ∈ {0, 0.1, 0.3, 1.0}. **λ = 0 was the
-   best PINN variant at every budget; every λ > 0 made pooled accuracy worse.**
+   (`pinn-soft`). The weight was swept λ ∈ {0, 0.1, 0.3, 1.0}. With default
+   hyperparameters every λ > 0 made pooled accuracy worse; only after the
+   retuning below did the residual ever help — and then only at the *largest*
+   budgets.
 
 2. **Hyperparameter retuning.** With the residual on, a shared learning rate
    left the physical parameters stuck at their (wrong) init, so the residual
    enforced *wrong* physics. Giving them a 10× faster rate on a 1500-epoch
    schedule fixed identification — `eta` → 0.964 (true 0.949), `kcyc` → 3.3e-7
-   (true 2.0e-7) — and recovered most of the loss the residual had caused. It
-   did not overturn the ranking.
+   (true 2.0e-7). This turned the residual into a mild regulariser that **edges
+   the MLP at N = 500 and 200** — but did not help, and slightly hurt, at small N.
 
-3. **Restricting samples.** The budget was pushed down to N ∈ {50, 25, 15, 10,
-   5}. The PINN never closed the gap. The one place physics helped was the
-   *degradation* target (`dsoh`) at the smallest N (e.g. N = 10: PINN ≈ 0.72 vs
-   MLP ≈ 0.95 relative MAE) — the tiny-signal target the MLP cannot learn from a
-   few points — but the PINN paid it back on `dsoc`/`grid`, the near-linear
-   targets the MLP nails from two samples, so overall accuracy stayed behind.
+3. **Restricting samples.** Pushed down to N ∈ {50, 25, 15, 10}. **The PINN does
+   not win in the low-data regime** — the opposite of the usual PINN motivation.
+   At small N the physical parameters are themselves under-identified, so the
+   residual regularises toward *slightly wrong* physics, while the MLP already
+   interpolates this smooth 3-D map from a handful of points. The only clear
+   low-N help is on the tiny-signal degradation target (`dsoh`) at N = 10
+   (`pinn-soft` 0.712 vs MLP 0.830), paid back on `dsoc`/`grid`.
 
-## Headline numbers (uniform coverage, pooled relative MAE, 3 fit seeds)
+## Headline numbers (pooled relative MAE, 3 fit seeds; **bold** = best at that N)
 
-| N | mlp | pinn-hard |
-|---|-----|-----------|
-| 100 | 0.044 | 0.061 |
-| 50 | 0.072 | 0.121 |
-| 25 | 0.142 | 0.147 |
-| 15 | 0.355 | 0.492 |
-| 10 | 0.450 | 0.632 |
+Uniform coverage (train and test span the envelope):
 
-The MLP leads at every budget. (The tuned `pinn-soft` arm, and the narrow-coverage
-regime, are produced by the same sweep script — `pinn-soft`'s only edge is on the
-`dsoh` target at N ≤ 10, never on pooled error.)
+| N | mlp | pinn-hard | pinn-soft (tuned) |
+|-----|-------|-----------|-------------------|
+| 500 | 0.018 | 0.019 | **0.014** |
+| 200 | 0.033 | 0.038 | **0.030** |
+| 100 | **0.044** | 0.061 | 0.066 |
+| 50 | **0.072** | 0.121 | 0.162 |
+| 25 | **0.142** | 0.147 | 0.198 |
+| 15 | **0.355** | 0.492 | 0.518 |
+| 10 | **0.450** | 0.632 | 0.504 |
 
-Physical-violation rates tell the qualitative half of the story: across all N
-the PINN's wrong-sign-grid and rising-SoH rates are exactly **0.0** (structural),
-while the MLP predicts wrong-sign grid up to ~2% of the time at N = 25 and
-occasionally rising SoH — small, but the kind of exploitable "free lunch" a
-Dyna-style agent actively seeks.
+Under **narrow** (realistic) coverage the MLP wins at every N and the soft
+residual is consistently worse (it over-constrains under biased data). So the
+large-N edge is fragile: there is **no budget at which a physics prior gives a
+robust sample-efficiency win**, and certainly none in the low-N regime PINNs are
+supposed to own.
+
+## Admissibility: the one unconditional advantage
+
+The PINN's wrong-sign-grid and rising-SoH rates are exactly **0.0** at every N
+and under both coverage regimes (structural). The MLP's climb steeply as data
+thins — precisely the low-N regime — and become substantial:
+
+| N (uniform) | MLP wrong-sign grid | MLP rising SoH (free degradation) |
+|-----|------|------|
+| 50 | 1.5% | 0.0% |
+| 25 | 2.1% | 0.1% |
+| 15 | 2.2% | 4.2% |
+| 10 | 8.6% | 0.0% |
+
+(Under narrow coverage the MLP's free-degradation rate reaches 15% at N = 10.)
+These are exactly the exploitable "free lunches" — phantom arbitrage profit,
+cost-free cycling — a Dyna-style optimiser would seek out. That the PINN forbids
+them by construction is its real, if narrow, value here: **admissibility, not
+accuracy.**
 
 ## Why the result is what it is (diagnosed cause)
 
@@ -84,8 +109,12 @@ Its hardest feature — saturation at the SoC bounds — is a kink an MLP fits f
 few points either side. There is simply little function-approximation difficulty
 for a physics prior to relieve, which is the regime where PINNs are known *not*
 to pay off (they shine on stiff/high-dimensional/sparsely-observed operators).
-The soft residual, being a competing objective, can only match the data fit in
-the best case and distorts the easy targets in practice.
+The soft residual is a competing objective: where labels are plentiful (large N)
+and evenly spread it acts as a mild regulariser and can edge the MLP, but where
+they are scarce (small N) or biased (narrow coverage) the physical parameters it
+depends on are themselves under-identified, so it regularises toward slightly
+wrong physics and hurts. Neither regime is the one the sample-efficiency
+hypothesis needed.
 
 The corollary is the honest positive claim the experiment *does* support: the
 value of physics here is **admissibility, not accuracy**. A physics-structured
