@@ -119,8 +119,8 @@ class Battery:
         )
 
         # Calendar aging: always ticks, faster at high SoC. The (0.5 + soc)
-        # factor makes a full battery age twice as fast as an empty one and
-        # calibrates to calendar_life_years at SoC 0.5.
+        # factor ranges 0.5-1.5, so a full battery ages three times as fast
+        # as an empty one, and calibrates to calendar_life_years at SoC 0.5.
         soc_avg = 0.5 * (soc_before + self.soc)
         calendar_loss = self._calendar_loss_per_hour * (0.5 + soc_avg) * dt_h
 
