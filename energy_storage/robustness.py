@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 import numpy as np
 
-from energy_storage.baselines import collect_episode
+from energy_storage.baselines import capture_jackknife, collect_episode
 from energy_storage.env import EnvConfig
 from energy_storage.market import ColdSnap, Drought, FuelShock, HeatWave, PlantOutage
 from energy_storage.oracle import RollingHorizonOracle
@@ -77,27 +77,28 @@ def evaluate_robustness(
 
 
 def summarize(results: dict[str, dict[str, np.ndarray]]) -> list[dict]:
-    """Flatten results into rows: mean/worst-decile net per regime, capture
-    as a fraction of the same-regime oracle mean (None without the oracle)."""
+    """Flatten results into rows: mean±std net per regime, capture as a
+    fraction of the same-regime oracle mean with jackknife std (None without
+    the oracle)."""
     oracle = results.get(ORACLE)
     rows = []
     for name, by_regime in results.items():
         if name == ORACLE:
             continue
         for regime, nets in by_regime.items():
-            capture = None
-            if oracle is not None:
-                oracle_mean = oracle[regime].mean()
-                if abs(oracle_mean) > 1e-9:
-                    capture = float(nets.mean() / oracle_mean)
+            capture = capture_std = None
+            if oracle is not None and abs(oracle[regime].mean()) > 1e-9:
+                capture, capture_std = capture_jackknife(nets, oracle[regime])
             rows.append(
                 {
                     "policy": name,
                     "regime": regime,
                     "net_mean": float(nets.mean()),
+                    "net_std": float(np.std(nets, ddof=1)) if len(nets) > 1 else 0.0,
                     "net_worst_decile": float(np.quantile(nets, 0.1)),
                     "oracle_net_mean": float(oracle[regime].mean()) if oracle else None,
                     "capture": capture,
+                    "capture_std": capture_std,
                 }
             )
     return rows
@@ -105,15 +106,19 @@ def summarize(results: dict[str, dict[str, np.ndarray]]) -> list[dict]:
 
 def format_table(rows: list[dict]) -> str:
     header = (
-        f"{'policy':<14} {'regime':<13} {'net mean':>10} {'worst 10%':>10} "
-        f"{'oracle':>10} {'capture':>8}"
+        f"{'policy':<14} {'regime':<13} {'net mean±std':>16} {'worst 10%':>10} "
+        f"{'oracle':>10} {'capture±jk std':>15}"
     )
     lines = [header, "-" * len(header)]
     for r in rows:
-        capture = f"{100 * r['capture']:7.1f}%" if r["capture"] is not None else "     n/a"
+        capture = (
+            f"{100 * r['capture']:6.1f}±{100 * r['capture_std']:4.1f}%"
+            if r["capture"] is not None
+            else "            n/a"
+        )
         oracle = f"{r['oracle_net_mean']:9.2f}$" if r["oracle_net_mean"] is not None else "      n/a"
         lines.append(
-            f"{r['policy']:<14} {r['regime']:<13} {r['net_mean']:>9.2f}$ "
-            f"{r['net_worst_decile']:>9.2f}$ {oracle:>10} {capture:>8}"
+            f"{r['policy']:<14} {r['regime']:<13} {r['net_mean']:>7.2f}±{r['net_std']:<6.2f}$ "
+            f"{r['net_worst_decile']:>9.2f}$ {oracle:>10} {capture:>15}"
         )
     return "\n".join(lines)

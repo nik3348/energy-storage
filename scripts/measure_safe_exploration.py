@@ -43,19 +43,21 @@ def random_policy_factory(seed: int):
     return policy
 
 
-def measure(policy_fn, config: EnvConfig, episodes: int, seed0: int) -> tuple[int, int]:
-    """Return (clipped_steps, total_steps) over `episodes` paired episodes."""
+def measure(policy_fn, config: EnvConfig, episodes: int, seed0: int) -> np.ndarray:
+    """Per-episode infeasible-request rates over `episodes` paired episodes."""
     env = BatteryArbitrageEnv(config)
-    clipped = total = 0
+    rates = np.empty(episodes)
     for ep in range(episodes):
         obs, _ = env.reset(seed=seed0 + ep)
+        clipped = total = 0
         done = False
         while not done:
             obs, _, terminated, truncated, info = env.step(policy_fn(env, obs))
             clipped += int(info["constraint_clipped"])
             total += 1
             done = terminated or truncated
-    return clipped, total
+        rates[ep] = clipped / total
+    return rates
 
 
 def main() -> None:
@@ -75,16 +77,16 @@ def main() -> None:
         "idle": idle_policy,
     }
 
-    header = f"{'policy':<10} {'infeasible req.':>15} {'rate':>8} {'per 365d budget':>16}"
+    header = f"{'policy':<10} {'rate mean±std':>16} {'per 365d budget':>16}"
     print(f"Safe exploration: infeasible on-asset action requests "
           f"({args.episodes} x {args.episode_days}-day paired episodes)\n")
     print(header)
     print("-" * len(header))
     budget_steps = args.budget_days * 24
     for name, policy in policies.items():
-        clipped, total = measure(policy, config, args.episodes, args.seed0)
-        rate = clipped / total if total else 0.0
-        print(f"{name:<10} {clipped:>8}/{total:<6} {rate:>7.1%} {rate * budget_steps:>15.0f}")
+        rates = measure(policy, config, args.episodes, args.seed0)
+        mean, std = rates.mean(), rates.std(ddof=1)
+        print(f"{name:<10} {100 * mean:>9.1f}±{100 * std:<4.1f}% {mean * budget_steps:>15.0f}")
 
 
 if __name__ == "__main__":

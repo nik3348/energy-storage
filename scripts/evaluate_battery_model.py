@@ -96,7 +96,7 @@ def main() -> None:
 
     for regime, sampler in samplers.items():
         print(f"\n=== coverage: {regime} (test = full envelope) ===")
-        header = f"{'N':>5} {'model':10} {'pooled':>8} {'dsoc':>7} {'dsoh':>7} {'grid':>7} {'freeDeg':>8} {'wrongGrid':>10}"
+        header = f"{'N':>5} {'model':10} {'pooled mean±std':>16} {'dsoc':>7} {'dsoh':>7} {'grid':>7} {'freeDeg':>8} {'wrongGrid':>10}"
         print(header)
         print("-" * len(header))
         for n in args.budgets:
@@ -111,15 +111,20 @@ def main() -> None:
                     for k, v in evaluate(pred, yt, pf_t, scale).items():
                         agg.setdefault(k, []).append(v)
                 mean = {k: float(np.mean(v)) for k, v in agg.items()}
-                records.append({"regime": regime, "n": n, "model": name, **mean})
+                std = {f"{k}_std": float(np.std(v, ddof=1)) for k, v in agg.items()}
+                records.append({"regime": regime, "n": n, "model": name, **mean, **std})
                 print(
-                    f"{n:>5} {name:10} {mean['pooled']:>8.4f} {mean['dsoc']:>7.3f} "
-                    f"{mean['dsoh']:>7.3f} {mean['grid']:>7.3f} {mean['free_deg']:>8.4f} "
-                    f"{mean['wrong_grid']:>10.4f}"
+                    f"{n:>5} {name:10} {mean['pooled']:>8.4f}±{std['pooled_std']:<7.4f} "
+                    f"{mean['dsoc']:>7.3f} {mean['dsoh']:>7.3f} {mean['grid']:>7.3f} "
+                    f"{mean['free_deg']:>8.4f} {mean['wrong_grid']:>10.4f}"
                 )
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    keys = ["regime", "n", "model", "pooled", "dsoc", "dsoh", "grid", "free_deg", "wrong_grid"]
+    keys = ["regime", "n", "model"] + [
+        k + suffix
+        for k in ["pooled", "dsoc", "dsoh", "grid", "free_deg", "wrong_grid"]
+        for suffix in ("", "_std")
+    ]
     np.savez(
         args.out,
         **{k: np.array([r[k] for r in records]) for k in keys},

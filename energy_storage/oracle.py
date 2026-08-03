@@ -198,9 +198,12 @@ def evaluate_hindsight(
         profits.append(traj["profit"].sum())
         degradations.append(traj["degradation_cost"].sum())
         rewards.append(traj["reward"].sum())
+    nets = np.asarray(profits) - np.asarray(degradations)
     return {
         "profit": float(np.mean(profits)),
         "degradation": float(np.mean(degradations)),
-        "net": float(np.mean(profits) - np.mean(degradations)),
+        "net": float(np.mean(nets)),
+        "net_std": float(np.std(nets, ddof=1)) if len(nets) > 1 else 0.0,
         "reward": float(np.mean(rewards)),
+        "nets": nets,
     }

@@ -11,21 +11,24 @@ Usage:
 
 import argparse
 
+import numpy as np
 from stable_baselines3 import SAC
 
 from energy_storage.baselines import model_policy
 from energy_storage.env import BatteryArbitrageEnv, EnvConfig
 
 
-def measure(policy_fn, config: EnvConfig, episodes: int, seed0: int) -> tuple[int, int, int]:
-    """Return (clipped_steps, total_steps, near_bound_steps) over `episodes`
+def measure(policy_fn, config: EnvConfig, episodes: int, seed0: int) -> tuple[np.ndarray, np.ndarray]:
+    """Per-episode (clipped_rate, near_bound_rate) arrays over `episodes`
     paired episodes. near_bound counts steps where SoC (before the action)
     sits within 0.1 of a bound, the "parked" behaviour the clipping rate is
     attributed to."""
     env = BatteryArbitrageEnv(config)
-    clipped = total = near_bound = 0
+    clip_rates = np.empty(episodes)
+    near_rates = np.empty(episodes)
     for ep in range(episodes):
         obs, _ = env.reset(seed=seed0 + ep)
+        clipped = total = near_bound = 0
         done = False
         while not done:
             soc = env.battery.soc
@@ -34,7 +37,9 @@ def measure(policy_fn, config: EnvConfig, episodes: int, seed0: int) -> tuple[in
             clipped += int(info["constraint_clipped"])
             total += 1
             done = terminated or truncated
-    return clipped, total, near_bound
+        clip_rates[ep] = clipped / total
+        near_rates[ep] = near_bound / total
+    return clip_rates, near_rates
 
 
 def main() -> None:
@@ -55,17 +60,19 @@ def main() -> None:
         "unlimited-data": model_policy(SAC.load(args.unlimited)),
     }
 
-    header = f"{'policy':<16} {'infeasible req.':>15} {'rate':>8} {'per 365d budget':>16} {'near-bound':>11}"
+    header = f"{'policy':<16} {'rate mean±std':>16} {'per 365d budget':>16} {'near-bound mean±std':>20}"
     print(f"Deployed-policy infeasible on-asset action requests "
           f"({args.episodes} x {args.episode_days}-day paired episodes, deterministic)\n")
     print(header)
     print("-" * len(header))
     budget_steps = args.budget_days * 24
     for name, policy in policies.items():
-        clipped, total, near_bound = measure(policy, config, args.episodes, args.seed0)
-        rate = clipped / total if total else 0.0
-        near_rate = near_bound / total if total else 0.0
-        print(f"{name:<16} {clipped:>8}/{total:<6} {rate:>7.1%} {rate * budget_steps:>15.0f} {near_rate:>10.1%}")
+        clip_rates, near_rates = measure(policy, config, args.episodes, args.seed0)
+        print(
+            f"{name:<16} {100 * clip_rates.mean():>9.1f}±{100 * clip_rates.std(ddof=1):<4.1f}% "
+            f"{clip_rates.mean() * budget_steps:>15.0f} "
+            f"{100 * near_rates.mean():>13.1f}±{100 * near_rates.std(ddof=1):<4.1f}%"
+        )
 
 
 if __name__ == "__main__":
