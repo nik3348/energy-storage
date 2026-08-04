@@ -58,7 +58,7 @@ Grid-scale Battery Energy Storage Systems (BESS) provide one way to address this
 
 However, operating BESS effectively isn't straightforward. The economic viability of a battery often depends on electricity price arbitrage, where the system charges when prices are low and discharges when prices are high. A policy that focuses only on short-term profit may cycle the battery aggressively, which can accelerate capacity fade and reduce its State of Health (SoH) \citep{xu2018degradation}. The long-term value of energy storage depends on control strategies that account for ageing mechanisms alongside revenue.
 
-Compounding this challenge, the battery operates in a shifting market where prices are influenced by a variety of factors creating regimes that may not have been encountered during the training of a control policy. This raises a question that goes beyond whether reinforcement learning can learn a good arbitrage policy, can the learned controller remain effective when the market shifts to a regime it has never seen?
+Compounding this challenge, the battery operates in a shifting market where prices are influenced by a variety of factors creating regimes that may not have been encountered during the training of a control policy. Europe's 2022 gas-price crisis is a concrete instance, moving both the level and the shape of electricity prices well outside any recent training window \citep{iea2022weo}. This raises a question that goes beyond whether reinforcement learning can learn a good arbitrage policy, can the learned controller remain effective when the market shifts to a regime it has never seen?
 
 \subsection{The Problem}
 
@@ -78,7 +78,7 @@ Together, these challenges motivate a control approach that can learn from few r
 
 The objective is fixed from the beginning as maximizing arbitrage profit and minimizing battery degradation, with wear priced at the cost of the health it consumes. To investigate how to pursue that objective from little real data, the dissertation builds a calibrated, fully deterministic market-and-battery simulator as a controlled testbed and studies a family of methods on it. The central method is Dyna where a SAC agent that trains inside a learned model of the environment's dynamics rather than on real interaction alone. Those dynamics split naturally into a market half and a battery half, the dissertation applies Dyna with both halves as the observation, with questions that follow from doing so. Learning the market half turns a season of freely-observed price days into unlimited imagined training days, and the recurring theme throughout the dissertation is the extent to which this approach achieves the performance of model-free arbitrage while relying on substantially less real data. The same structure is then probed from other angles; whether training off-asset keeps exploration safe on the physical battery, whether the framework degrades gracefully under transient shocks, whether a nightly refit-and-replan loop lets it track persistent regime shifts, and whether the battery is better learned than assumed.
 
-This decomposition is motivated by a simple structural observation. A battery operating as a price-taker interacts with two distinct domains; a deterministic physical system and a stochastic market environment.
+This decomposition is motivated by a simple structural observation. A battery operating as a price-taker, the standard modelling assumption for storage small relative to the system it trades in \citep{sioshansi2009storage}, interacts with two distinct domains; a deterministic physical system and a stochastic market environment.
 
 We therefore decompose the world model accordingly.
 
@@ -99,7 +99,7 @@ Every investigation in this dissertation shares the premise that a price-taking 
 \item \textbf{Does training in imagination with planner demonstrations produce a deployed policy that requests fewer infeasible actions than one trained model-free?} No, evaluated on the real asset, the trained Dyna policy requests an SoC-bound-throttled action on 92.8\% of steps, statistically indistinguishable from a policy trained entirely model-free (95.1\%) or from replay alone (95.2\%). The off-asset design doesn't carry over into a deployed policy that violates SoC bounds less often (Section~\ref{sec:results-safe}).
 \item \textbf{Does the validated world model degrade gracefully under transient shocks it never trained on?} The frozen dyna policy, an unlimited-data model-free policy, and a replay-only control, all trained purely on calm historical data with no shock exposure, are evaluated zero-shot against five unseen shocks on the same shocked days. Dyna clearly outperforms the replay-only control and closely tracks the unlimited-data policy shock for shock, on a real-data budget two orders of magnitude smaller, even edging it under the fuel shock. More calm-regime data doesn't buy shock robustness (Section~\ref{sec:results-robustness}).
 \item \textbf{Can an in-imagination adaptation loop recover from persistent regime shifts?} A nightly refit-and-replan procedure is tested on a deployment where the market shifts partway through. It fails to beat simply freezing the pre-shift policy. The nightly refit's market predictions drift outside the same calibration range used to approve the original model, and never return to it for the rest of the deployment (Section~\ref{sec:results-adaptation}).
-\item \textbf{Does a physics-informed battery surrogate need fewer real transitions than a plain MLP to predict the battery's own dynamics?} Holding the market exact, the battery alone is learned from a transition log. On this smooth, low-dimensional map, the physics-informed network shows no robust sample-efficiency crossover over a plain MLP, not even in the small-data regime a PINN is meant to own. The finding is negative, and an ablation that refits the network with deliberately wrong physics explains it: the residual carries genuine physical information only at the largest budgets, where breaking it costs about $4.9\times$ the error, and is inert below $N{=}50$, precisely the scarce-data regime that motivates a physics prior in the first place. The zero rate of physically impossible predictions usually claimed for such models is definitional here, imposed by an output clamp that any network can carry, so it isn't evidence for the physics prior either. On this problem the physics-informed approach isn't practical (Section~\ref{sec:results-pinn}).
+\item \textbf{Does a physics-informed battery surrogate need fewer real transitions than a plain MLP to predict the battery's own dynamics?} Holding the market exact, the battery alone is learned from a transition log. On this smooth, low-dimensional map, the physics-informed network shows no robust sample-efficiency crossover over a plain MLP, not even in the small-data regime a PINN is meant to own \citep{raissi2019pinn}. The finding is negative, and an ablation that refits the network with deliberately wrong physics explains it: the residual carries genuine physical information only at the largest budgets, where breaking it costs about $4.9\times$ the error, and is inert below $N{=}50$, precisely the scarce-data regime that motivates a physics prior in the first place. The zero rate of physically impossible predictions usually claimed for such models is definitional here, imposed by an output clamp that any network can carry, so it isn't evidence for the physics prior either. On this problem the physics-informed approach isn't practical (Section~\ref{sec:results-pinn}).
 \end{enumerate}
 
 \section{Related Work}
@@ -123,6 +123,11 @@ World-model approaches such as Dreamer \citep{hafner2020dreamer} learn latent dy
 
 Reinforcement learning under non-stationary dynamics has been studied as worst-case planning against continuous drift \citep{lecarpentier2019nonstationary}, as a continual-learning problem balancing plasticity against forgetting \citep{khetarpal2022continualrl}, and surveyed more broadly by \citet{padakandla2021survey}; the supervised-learning literature on concept drift \citep{gama2014conceptdrift} contributes the detect-then-adapt pattern this work follows. The setting here is distinctive in two respects. First, the non-stationary component is \emph{exogenous and fully observed} such that every day the market publishes the very quantity the model must track, so adaptation data accrues at a fixed rate for free, independent of the policy. Second, the asset constraint forbids on-policy re-exploration, so adaptation must run off-asset in order of refiting the small market model, retraining in imagination, deploying tomorrow. The dissertation's adaptation experiment measures how much this structure is worth relative to model-free online fine-tuning bound to the real stream.
 
+\subsection{Physics-Informed Surrogates for Dynamics Models}
+\label{sec:related-pinn}
+
+A separate line of work embeds known governing equations into the network itself. Physics-informed neural networks \citep{raissi2019pinn} add a loss term penalising violation of the governing law at collocation points, which carry no labels, so the physics is meant to substitute for data and the model to reach a given accuracy from fewer measured samples. That promise has been carried into lithium-ion modelling, where physics-informed networks are reported to give stable degradation prediction and prognosis from limited cell data \citep{wang2024pinnbattery}, into continuous control \citep{antonelo2024pinc}, and into the exact architecture used here, since \citet{Liu_2021} train a Dyna-style agent inside a physics-informed dynamics model. Together these motivate inverting this dissertation's default assumption, learning the battery half of the decomposition rather than assuming it, from a transition log short enough that an operator might plausibly have one. The scope of the original claim matters for reading the result. The residual is established where the target map is stiff, high-dimensional, or observed too sparsely for an unconstrained network to interpolate; a price-taking battery's step map is smooth, three-dimensional and cheap to label, so Section~\ref{sec:results-pinn} measures how far the sample-efficiency claim extends rather than whether it ever holds.
+
 \section{Synthetic Merit-Order Market Simulator}
 \label{sec:simulator}
 
@@ -143,8 +148,9 @@ The fleet comprises solar (500\,MW, the duck-curve driver), wind, must-run geoth
 Each hour clears as a uniform-price merit-order auction. Every generator submits (price, quantity) offers, the clearing intersects the resulting supply curve with demand, and all dispatched capacity is paid the marginal price. One simulated day yields 24 prices plus dispatch by technology.
 
 \subsection{Calibration}
+\label{sec:calibration}
 
-The simulator is held to a statistical calibration contract, enforced by the test suite over a seeded simulated year. The median price is $\approx\$64$/MWh, the winter median more than \$6 above the summer median and the winter mean more than \$15 above it, the evening peak above overnight prices, scarcity below 1.5\% of hours, and negative prices rare but present. These tests are the contract that the market hasn't drifted when any fleet or weather parameter changes.
+The simulator is held to a statistical calibration contract, enforced by the test suite over a seeded simulated year. The median price is $\approx\$64$/MWh, the winter median more than \$6 above the summer median and the winter mean more than \$15 above it, the evening peak above overnight prices, scarcity below 1.5\% of hours, and negative prices rare but present. These thresholds were fixed by tuning the fleet and driver parameters until the simulated year showed the structure above, not by fitting to measured prices, so no value here is an empirical estimate. They serve as regression bounds, and a failure means the market drifted when a fleet or weather parameter changed.
 
 \subsection{Regime-Shift Scenarios}
 \label{sec:regime-scenarios}
@@ -194,7 +200,7 @@ Episodes are 14 days (336 hourly steps) with randomised initial SoC and SoH and 
 Every result is compared against four reference policies.
 
 \begin{itemize}
-\item \textbf{Hindsight optimum.} The best schedule possible, found by dynamic programming over a discretised grid of State-of-Charge values, using the actual prices for the whole episode. It's a valid upper bound because the battery is a price-taker, so its trading can't change the prices it plans against. This defines 100\% of the value any policy could attain.
+\item \textbf{Hindsight optimum.} The best schedule possible, found by dynamic programming over a discretised grid of State-of-Charge values, using the actual prices for the whole episode. It's a valid upper bound because the battery is a price-taker, so its trading can't change the prices it plans against. Perfect-foresight dynamic programming under exactly this assumption is the established way the arbitrage value of storage is bounded \citep{sioshansi2009storage}. This defines 100\% of the value any policy could attain.
 \item \textbf{Rolling-horizon oracle.} The same dynamic program, but limited to what the agent actually knows at each step (the next 24 known prices), and re-run every hour. It reaches 99.9\% of the hindsight optimum. This tells us the 24-hour window already contains almost all the information needed, so any gap left by a learned policy is a failure to learn, not a lack of information. A test pins its cost model to the real battery physics, so ``optimal'' really means optimal against the true dynamics. In the adaptation experiment it also serves as the \emph{instant-adaptation baseline}, since it replans on each day's observed prices and so adapts immediately by design.
 \item \textbf{Heuristic.} A simple price-threshold rule that charges when the price is in a low percentile of the known window and discharges when it's in a high one. It stands in for a trusted human operator.
 \item \textbf{Idle.} This arm does nothing at all. It still loses money because the battery ages over time (calendar ageing), so it marks the floor.
@@ -205,7 +211,7 @@ Most of the arbitrage value comes from a few scarcity weeks, so profit varies a 
 \subsection{The Learned Market Model}
 \label{sec:market-model}
 
-The world model is a generative model of a single market day. It produces 24 hourly prices (log-normalized) from a 7-dimensional context made up of four calendar features (position in the year, weekend, holiday) and three summary statistics of the previous day's prices (log-normalized mean, minimum, and maximum). Generation is \emph{hour-autoregressive}, which means the model produces the day one hour at a time. The context sets the initial hidden state of a GRU (a type of recurrent neural network), which then steps through the 24 hours; each hour's price is drawn from a Gaussian that depends on the hours already generated. To capture the model's own uncertainty, we train an ensemble of $K=5$ networks, each fit on a bootstrap resample of the observed days. Each imagined episode picks one ensemble member and generates day after day, feeding each generated day back as the context for the next.
+The world model is a generative model of a single market day. It produces 24 hourly prices (log-normalized) from a 7-dimensional context made up of four calendar features (position in the year, weekend, holiday) and three summary statistics of the previous day's prices (log-normalized mean, minimum, and maximum). Generation is \emph{hour-autoregressive}, which means the model produces the day one hour at a time. The context sets the initial hidden state of a gated recurrent unit \citep[GRU,][]{cho2014gru}, which then steps through the 24 hours; each hour's price is drawn from a Gaussian that depends on the hours already generated. To capture the model's own uncertainty, we train an ensemble of $K=5$ networks, each fit on a bootstrap resample of the observed days, following the standard practice of treating disagreement across independently fitted networks as a predictive-uncertainty estimate \citep{lakshminarayanan2017ensembles, osband2018rpf}. Each imagined episode picks one ensemble member and generates day after day, feeding each generated day back as the context for the next.
 
 We also record two architectures that didn't work. A feedforward model that generates all 24 hours in one shot as independent Gaussians (and a low-rank variant that allows limited hour-to-hour correlation) fails the validation gate. Because these models treat the 24 hours as independent, they can't represent the fact that scarcity comes in blocks of several consecutive expensive hours. To reproduce those hours at all, they have to give every hour a fat tail, which makes the daily price spread far too wide. The hour-autoregressive model avoids this. Once it effectively ``decides'' that a day is a scarcity day, it stays on that path for the rest of the day.
 
@@ -221,7 +227,7 @@ A model that fails any criterion isn't used and the Dyna training script refuses
 \subsection{Dyna Training with Planner Demonstrations}
 \label{sec:dyna-training}
 
-The Dyna agent is a standard SAC agent trained inside the learned market, with one addition. Before training begins, we fill part of the replay buffer with transitions from the rolling-horizon planner acting on the $D$ stored \emph{real} days (replayed exactly through the environment). These planner demonstrations act like the logs of a trusted existing controller. They put real-market transitions and sensible behaviour into the buffer without the policy ever having to act on the real system before it's trained. From then on, all exploration happens in imagination. Checkpoints are chosen using only each arm's own data source, the real simulator is used only for the final held-out evaluation.
+The Dyna agent is a standard SAC agent trained inside the learned market, with one addition. Before training begins, we fill part of the replay buffer with transitions from the rolling-horizon planner acting on the $D$ stored \emph{real} days (replayed exactly through the environment). These planner demonstrations act like the logs of a trusted existing controller. Seeding an off-policy replay buffer with demonstrations is established practice for cutting the cost of early exploration \citep{hester2018dqfd, vecerik2017ddpgfd} but what differs here is the source, since the demonstrator is an exact planner rather than a human operator. This is to prevent the battery from untrained random actions. They put real-market transitions and sensible behaviour into the buffer without the policy ever having to act on the real system before it's trained. From then on, all exploration happens in imagination. Checkpoints are chosen using only each arm's own data source, the real simulator is used only for the final held-out evaluation.
 
 \subsection{The Adaptation Loop}
 \label{sec:adaptation-loop}
@@ -230,8 +236,8 @@ The agent is deployed in a streaming setup where it sees one real market day at 
 
 \begin{enumerate}
 \item \textbf{Observes and stores} the day's 24 published prices, adding them to its history. This data arrives for free, no matter what the policy did.
-\item \textbf{Detects} how surprising the day was, by computing the negative log-likelihood (NLL) of the observed day under the ensemble. A regime shift surprises every ensemble member at once, so this per-day NLL is a clearer signal than measuring how much the members disagree. The NLL over the whole deployment is itself one of the reported results. (The main version adapts every night regardless; a version that only adapts when the NLL is high is a compute-saving refinement.)
-\item \textbf{Refits the market model.} It fine-tunes each ensemble member, starting from its current weights, on the most recent 90 days of observed prices plus a freshly-resampled set of 30 pre-deployment ``anchor'' days that guard against forgetting. It's deliberately \emph{not} retrained from scratch, because much of the old structure (the daily shape, calendar effects) still holds and should be kept. Each member resamples its data (bootstrap) so the ensemble stays diverse.
+\item \textbf{Detects} how surprising the day was, by computing the negative log-likelihood (NLL) of the observed day under the ensemble, the detect-then-adapt pattern of the concept-drift literature \citep{gama2014conceptdrift} with likelihood under the current model as the drift statistic. A regime shift surprises every ensemble member at once, so this per-day NLL is a clearer signal than measuring how much the members disagree. The NLL over the whole deployment is itself one of the reported results. (The main version adapts every night regardless; a version that only adapts when the NLL is high is a compute-saving refinement.)
+\item \textbf{Refits the market model.} It fine-tunes each ensemble member, starting from its current weights, on the most recent 90 days of observed prices plus a freshly-resampled set of 30 pre-deployment ``anchor'' days that guard against forgetting, the plasticity-stability trade-off that continual learning has to manage \citep{khetarpal2022continualrl}. It's deliberately \emph{not} retrained from scratch, because much of the old structure (the daily shape, calendar effects) still holds and should be kept. Each member resamples its data (bootstrap) so the ensemble stays diverse.
 \item \textbf{Refreshes demonstrations.} It runs the rolling-horizon planner on the last 7 \emph{real} (post-shift) days and adds those transitions to a small replay buffer, so the policy update is grounded in real shifted behaviour and not only in imagination.
 \item \textbf{Fine-tunes the policy in imagination.} It continues SAC training from the current weights for a fixed number of steps inside the updated learned market. The imagination environment refers to the ensemble directly, so every generated day already reflects the newly refitted model.
 \item \textbf{Deploys the next day.} All of the steps above run off the physical asset, overnight.
@@ -293,7 +299,7 @@ All metrics are normalized by the oracle on the same seed. Because the oracle re
 \subsection{Hyperparameters, Seeds, and Reporting}
 \label{sec:reporting}
 
-All SAC arms use Stable-Baselines3 defaults, except warmup, which scales with the step budget ($\min(2{,}000, \max(T/10, 100))$) so the small online budgets aren't burned entirely on random actions. Replay and dyna train for 500{,}000 steps across 4 parallel envs, checkpointed by periodic 5-episode evals on each arm's own data source (Section~\ref{sec:dyna-training}). The market ensemble (Section~\ref{sec:market-model}) is 5 GRUs, hidden width 128, 2{,}000 epochs. The nightly loop (Section~\ref{sec:adaptation-loop}) fine-tunes for 25 epochs and trains the policy for 10{,}000 imagined steps; online-ft instead takes 240 real gradient steps a night. Seed ranges never overlap: training at seed 0, held-out eval from seed 1{,}000{,}000, adaptation deployments from seed 7{,}000{,}000.
+All SAC arms use Stable-Baselines3 \citep{raffin2021sb3} defaults, except warmup, which scales with the step budget ($\min(2{,}000, \max(T/10, 100))$) so the small online budgets aren't burned entirely on random actions. Replay and dyna train for 500{,}000 steps across 4 parallel envs, checkpointed by periodic 5-episode evals on each arm's own data source (Section~\ref{sec:dyna-training}). The market ensemble (Section~\ref{sec:market-model}) is 5 GRUs, hidden width 128, 2{,}000 epochs. The nightly loop (Section~\ref{sec:adaptation-loop}) fine-tunes for 25 epochs and trains the policy for 10{,}000 imagined steps; online-ft instead takes 240 real gradient steps a night. Seed ranges never overlap: training at seed 0, held-out eval from seed 1{,}000{,}000, adaptation deployments from seed 7{,}000{,}000.
 
 Dollar amounts scale with the simulator's price cap, because most arbitrage value comes from capturing scarcity hours. We measured this sensitivity rather than assuming it. The hindsight optimum is about $+\$90$ per 14-day episode at a \$3000/MWh cap and $+\$28$ at \$1000, and at \$200 the heuristic falls below idle because spread arbitrage alone no longer covers the cost of cycling the battery. We fix the cap at \$1000/MWh for all experiments, chosen so the benchmark ladder stays strictly ordered and evaluation variance stays manageable. Every headline number is reported as a fraction of the oracle or hindsight optimum on the same seeds, which cancels out this level scaling. The learned-policy comparisons are all run at this single cap; Section~\ref{sec:limitations} states what is and isn't claimed as a result.
 
@@ -303,7 +309,7 @@ Dollar amounts scale with the simulator's price cap, because most arbitrage valu
 \subsection{Does a Validated Model Buy Sample Efficiency?}
 \label{sec:results-budget}
 
-Unless stated otherwise, quoted percentages are of the hindsight optimum on the real simulator (20 paired 14-day episodes for the budget and robustness experiments), and of the same-seed rolling-horizon oracle (10 paired 120-day deployments) for the adaptation experiment.
+Unless stated otherwise, quoted percentages are of the hindsight optimum on the real simulator (20 paired 14-day episodes for the budget and robustness experiments), and of the same-seed rolling-horizon oracle (10 paired 120-day deployments) for the adaptation experiment. Because these are ratios of pooled sums rather than means of per-episode ratios, their error margins are leave-one-out jackknife standard deviations over the resampling unit named in each caption. Quantities that are not pooled ratios, namely regret in dollars and surrogate error across fit seeds, carry plain standard deviations instead.
 
 \label{sec:results-gate}Table~\ref{tab:gate-sweep} sweeps $D \in \{90, 365, 1095\}$ real days for the hour-autoregressive ensemble, and only $D=365$ passes every criterion. At $D=90$ it fails in the expected direction, since barely a season means the invented daily spread comes out more than double the real year's and the winter/evening patterns flip sign entirely. At $D=1095$ it fails differently. Pooling three winters of varying severity smooths away exactly the seasonal extremity one well-covered year preserves. So the gate isn't rewarding ``more data'' as such, it's picking out one specific window, and neither more nor less data was assumed safe going in.
 
@@ -472,7 +478,7 @@ That timing also rules out the obvious repair. Re-gating the nightly refit, free
 \subsection{Does a Physics Prior Need Fewer Transitions?}
 \label{sec:results-pinn}
 
-No, and not even in the small-$N$ regime a PINN is meant to own (Table~\ref{tab:pinn-accuracy}). Holding the market exact, an MLP and a physics-informed network both learn $(\mathrm{soc}, \mathrm{soh}, \text{power fraction}) \mapsto (\Delta\mathrm{soc}, \Delta\mathrm{soh}, \text{grid energy})$ from a shrinking budget of $N$ transitions, over ten fit seeds. The soft residual beats the MLP only at $N{=}500$ ($0.014\pm0.002$ vs.\ $0.018\pm0.003$), and its apparent edge at $N{=}200$ sits inside one standard deviation. Below that the MLP wins outright and by widening margins, the battery map being smooth enough that an unconstrained network interpolates it from a handful of points. Under a narrow training distribution the MLP wins at every budget.
+No, and not even in the small-$N$ regime a PINN is meant to own (Section~\ref{sec:related-pinn}, Table~\ref{tab:pinn-accuracy}). Holding the market exact, an MLP and a physics-informed network both learn $(\mathrm{soc}, \mathrm{soh}, \text{power fraction}) \mapsto (\Delta\mathrm{soc}, \Delta\mathrm{soh}, \text{grid energy})$ from a shrinking budget of $N$ transitions, over ten fit seeds. The soft residual beats the MLP only at $N{=}500$ ($0.014\pm0.002$ vs.\ $0.018\pm0.003$), and its apparent edge at $N{=}200$ sits inside one standard deviation. Below that the MLP wins outright and by widening margins, the battery map being smooth enough that an unconstrained network interpolates it from a handful of points. Under a narrow training distribution the MLP wins at every budget.
 
 \begin{table}[htbp]
 \centering
@@ -502,7 +508,7 @@ To be thorough about \emph{why} the prior doesn't pay, we asked whether a PINN g
 
 It can't (Table~\ref{tab:pinn-wrong}). At $N{=}500$ wrong efficiency ($0.070\pm0.004$) and wrong capacity ($0.071\pm0.002$) cost about $4.9\times$ the correct residual's error and land about $3.9\times$ worse than the MLP, while the control ($0.014\pm0.002$) matches the correct residual exactly. So where the residual helps at all, it helps because the physics is right. But the penalty for wrong physics shrinks steadily as data thins ($4.9\times$, $2.7\times$, $1.6\times$, $1.1\times$ at $N = 500, 200, 100, 50$) and disappears below $N{=}50$, where every wrong variant sits inside the seed spread of the correct one.
 
-The residual is therefore inert exactly where a PINN is supposed to help. It only bites once there's enough data to identify its physical parameters, which is the regime where the plain MLP was already good enough. Taken with the accuracy results, the verdict on this problem is simply negative: the physics prior isn't practical here. It loses on accuracy at every budget an operator would realistically have, its residual carries no information at those budgets, and and its one apparent guarantee is an output clamp restated, available to any network without physics. Section~\ref{sec:limitations} notes what would have to change for the conclusion to differ.
+The residual is therefore inert exactly where a PINN is supposed to help. It only bites once there's enough data to identify its physical parameters, which is the regime where the plain MLP was already good enough. Taken with the accuracy results, the verdict on this problem is simply negative: the physics prior isn't practical here. It loses on accuracy at every budget an operator would realistically have, its residual carries no information at those budgets, and its one apparent guarantee is an output clamp restated, available to any network without physics. Section~\ref{sec:limitations} notes what would have to change for the conclusion to differ.
 
 \begin{table*}[t]
 \centering
@@ -555,17 +561,23 @@ Two smaller variants are worth running beside it. A re-gated loop, freezing the 
 
 On the market model itself, a mixture-density day model might pass the gate at smaller budgets than the current ensemble manages, and a gate whose acceptance regions come from the market's own year-to-year variability would be better calibrated than fixed bands.
 
-The battery study (Section~\ref{sec:results-pinn}) closes off more than it opens. Because the residual is inert at realistic log sizes and the output clamp needs no physics, the question worth keeping isn't about physics priors at all. It's whether constraining a surrogate's outputs to be physically possible protects a downstream policy from model exploitation, which can be tested by training policies against a constrained and an unconstrained MLP and evaluating both on the true battery. No physics-informed variant is needed for that. A stronger claim about physics priors would need a harder dynamics problem, since a smooth three-dimensional map is close to the worst case for showing their value.
+The battery study (Section~\ref{sec:results-pinn}) closes off more than it opens. Because the residual is inert at realistic log sizes and the output clamp needs no physics, the question worth keeping isn't about physics priors at all. It's whether constraining a surrogate's outputs to be physically possible protects a downstream policy from model exploitation, which can be tested by training policies against a constrained and an unconstrained MLP and evaluating both on the true battery. No physics-informed variant is needed for that. A stronger claim about physics priors would need a harder dynamics problem, since a smooth three-dimensional map is close to the worst case for showing their value. The successes reported on real cells \citep{wang2024pinnbattery} are recovered from noisy, partially observed measurements rather than from an exactly simulated step map, so the negative here bounds the claim rather than contradicting those results.
 
-Finally, the evaluation can be widened: validating the simulator's shift scenarios against real market episodes such as 2022, repeating the budget sweep over several training seeds, modelling battery chemistries whose cycle and calendar ageing balance differently, and relaxing the price-taker assumption toward price-making storage, which would couple the two halves of the world model this dissertation deliberately kept apart.
+Finally, the evaluation can be widened: validating the simulator's shift scenarios against real market episodes such as the 2022 European price crisis, repeating the budget sweep over several training seeds, modelling battery chemistries whose cycle and calendar ageing balance differently, and relaxing the price-taker assumption toward price-making storage, which would couple the two halves of the world model this dissertation deliberately kept apart.
 
 \begin{thebibliography}{}
 
 \bibitem[Aneke and Wang, 2016]{aneke2016storage}
 Aneke, M. and Wang, M. (2016) `Energy storage technologies and real life applications: a state of the art review', \emph{Applied Energy}, 179, pp.\ 350--377. doi: 10.1016/j.apenergy.2016.06.097.
 
+\bibitem[Antonelo et al., 2024]{antonelo2024pinc}
+Antonelo, E.A. et al. (2024) `Physics-informed neural nets for control of dynamical systems', \emph{Neurocomputing}, 579. Available at: https://arxiv.org/abs/2104.02556 (Accessed: 28 July 2026).
+
 \bibitem[Cao et al., 2020]{cao2020arbitrage}
 Cao, J. et al. (2020) `Deep reinforcement learning-based energy storage arbitrage with accurate lithium-ion battery degradation model', \emph{IEEE Transactions on Smart Grid}, 11(5), pp.\ 4513--4521. doi: 10.1109/TSG.2020.2986333.
+
+\bibitem[Cho et al., 2014]{cho2014gru}
+Cho, K. et al. (2014) `Learning phrase representations using RNN encoder-decoder for statistical machine translation', in \emph{Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing (EMNLP)}, pp.\ 1724--1734. doi: 10.3115/v1/D14-1179.
 
 \bibitem[Chua et al., 2018]{chua2018pets}
 Chua, K. et al. (2018) `Deep reinforcement learning in a handful of trials using probabilistic dynamics models', in \emph{Advances in Neural Information Processing Systems}, 31. Available at: https://arxiv.org/abs/1805.12114 (Accessed: 28 July 2026).
@@ -579,6 +591,12 @@ Haarnoja, T., Zhou, A., Abbeel, P. and Levine, S. (2018) `Soft actor-critic: off
 \bibitem[Hafner et al., 2020]{hafner2020dreamer}
 Hafner, D. et al. (2020) `Dream to control: learning behaviors by latent imagination', in \emph{International Conference on Learning Representations (ICLR 2020)}. Available at: https://arxiv.org/abs/1912.01603 (Accessed: 28 July 2026).
 
+\bibitem[Hester et al., 2018]{hester2018dqfd}
+Hester, T. et al. (2018) `Deep Q-learning from demonstrations', in \emph{Proceedings of the 32nd AAAI Conference on Artificial Intelligence (AAAI-18)}, pp.\ 3223--3230. Available at: https://arxiv.org/abs/1704.03732 (Accessed: 4 August 2026).
+
+\bibitem[International Energy Agency, 2022]{iea2022weo}
+International Energy Agency (2022) \emph{World energy outlook 2022}. Paris: IEA. Available at: https://www.iea.org/reports/world-energy-outlook-2022 (Accessed: 4 August 2026).
+
 \bibitem[International Energy Agency, 2023]{iea2023etp}
 International Energy Agency (2023) \emph{Energy technology perspectives 2023}. Paris: IEA. Available at: https://www.iea.org/reports/energy-technology-perspectives-2023 (Accessed: 28 July 2026).
 
@@ -588,14 +606,38 @@ Janner, M. et al. (2019) `When to trust your model: model-based policy optimizat
 \bibitem[Khetarpal et al., 2022]{khetarpal2022continualrl}
 Khetarpal, K. et al. (2022) `Towards continual reinforcement learning: a review and perspectives', \emph{Journal of Artificial Intelligence Research}, 75, pp.\ 1401--1476. Available at: https://arxiv.org/abs/2012.13490 (Accessed: 28 July 2026).
 
+\bibitem[Lakshminarayanan et al., 2017]{lakshminarayanan2017ensembles}
+Lakshminarayanan, B., Pritzel, A. and Blundell, C. (2017) `Simple and scalable predictive uncertainty estimation using deep ensembles', in \emph{Advances in Neural Information Processing Systems}, 30. Available at: https://arxiv.org/abs/1612.01474 (Accessed: 4 August 2026).
+
 \bibitem[Lecarpentier and Rachelson, 2019]{lecarpentier2019nonstationary}
 Lecarpentier, E. and Rachelson, E. (2019) `Non-stationary Markov decision processes, a worst-case approach using model-based reinforcement learning', in \emph{Advances in Neural Information Processing Systems}, 32. Available at: https://arxiv.org/abs/1904.10090 (Accessed: 28 July 2026).
+
+\bibitem[Liu and Wang, 2021]{Liu_2021}
+Liu, X.-Y. and Wang, J.-X. (2021) `Physics-informed Dyna-style model-based deep reinforcement learning for dynamic control', \emph{Proceedings of the Royal Society A}, 477(2255). doi: 10.1098/rspa.2021.0618.
+
+\bibitem[Osband et al., 2018]{osband2018rpf}
+Osband, I., Aslanides, J. and Cassirer, A. (2018) `Randomized prior functions for deep reinforcement learning', in \emph{Advances in Neural Information Processing Systems}, 31. Available at: https://arxiv.org/abs/1806.03335 (Accessed: 4 August 2026).
 
 \bibitem[Padakandla, 2021]{padakandla2021survey}
 Padakandla, S. (2021) `A survey of reinforcement learning algorithms for dynamically varying environments', \emph{ACM Computing Surveys}, 54(6), pp.\ 1--25. Available at: https://arxiv.org/abs/2005.10619 (Accessed: 28 July 2026).
 
+\bibitem[Raissi et al., 2019]{raissi2019pinn}
+Raissi, M., Perdikaris, P. and Karniadakis, G.E. (2019) `Physics-informed neural networks: a deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations', \emph{Journal of Computational Physics}, 378, pp.\ 686--707. doi: 10.1016/j.jcp.2018.10.045.
+
+\bibitem[Raffin et al., 2021]{raffin2021sb3}
+Raffin, A. et al. (2021) `Stable-Baselines3: reliable reinforcement learning implementations', \emph{Journal of Machine Learning Research}, 22(268), pp.\ 1--8. Available at: https://jmlr.org/papers/v22/20-1364.html (Accessed: 4 August 2026).
+
+\bibitem[Sioshansi et al., 2009]{sioshansi2009storage}
+Sioshansi, R., Denholm, P., Jenkin, T. and Weiss, J. (2009) `Estimating the value of electricity storage in PJM: arbitrage and some welfare effects', \emph{Energy Economics}, 31(2), pp.\ 269--277. doi: 10.1016/j.eneco.2008.10.005.
+
 \bibitem[Sutton, 1991]{sutton1991dyna}
 Sutton, R.S. (1991) `Dyna, an integrated architecture for learning, planning, and reacting', \emph{ACM SIGART Bulletin}, 2(4), pp.\ 160--163. doi: 10.1145/122344.122377.
+
+\bibitem[Vecerik et al., 2017]{vecerik2017ddpgfd}
+Vecerik, M. et al. (2017) `Leveraging demonstrations for deep reinforcement learning on robotics problems with sparse rewards', \emph{arXiv preprint} arXiv:1707.08817. Available at: https://arxiv.org/abs/1707.08817 (Accessed: 4 August 2026).
+
+\bibitem[Wang et al., 2024]{wang2024pinnbattery}
+Wang, F. et al. (2024) `Physics-informed neural network for lithium-ion battery degradation stable modeling and prognosis', \emph{Nature Communications}, 15(1), 4332. doi: 10.1038/s41467-024-48779-z.
 
 \bibitem[Xu et al., 2018]{xu2018degradation}
 Xu, B. et al. (2018) `Modeling of lithium-ion battery degradation for cell life assessment', \emph{IEEE Transactions on Smart Grid}, 9(2), pp.\ 1131--1140. doi: 10.1109/TSG.2016.2578950.
