@@ -9,8 +9,8 @@ Usage:
 """
 
 import argparse
+from pathlib import Path
 
-import numpy as np
 from stable_baselines3 import SAC
 
 from energy_storage.baselines import (
@@ -37,14 +37,20 @@ def main() -> None:
     config = EnvConfig(episode_days=args.episode_days)
     hindsight = evaluate_hindsight(config, args.episodes, args.seed0)
 
-    policies = {
-        "rolling-oracle": RollingHorizonOracle(),
-        "dyna-365": model_policy(SAC.load(args.dyna)),
-        "replay-365": model_policy(SAC.load(args.replay)),
-        "unlimited-data": model_policy(SAC.load(args.unlimited)),
-        "heuristic": heuristic_policy,
-        "idle": idle_policy,
-    }
+    # Reference policies need no training, so the ladder still runs (without the
+    # learned rows) for anyone who has the source but not the checkpoints.
+    policies = {"rolling-oracle": RollingHorizonOracle()}
+    for name, path in (
+        ("dyna-365", args.dyna),
+        ("replay-365", args.replay),
+        ("unlimited-data", args.unlimited),
+    ):
+        if Path(path).exists():
+            policies[name] = model_policy(SAC.load(path))
+        else:
+            print(f"skipping {name}: no checkpoint at {path}")
+    policies["heuristic"] = heuristic_policy
+    policies["idle"] = idle_policy
 
     print(
         f"Benchmark ladder, {args.episodes} paired {args.episode_days}-day episodes, "

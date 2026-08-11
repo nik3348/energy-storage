@@ -15,12 +15,12 @@ uv run pytest -q                                   # all tests
 uv run pytest tests/test_market.py -q              # one file
 uv run pytest tests/test_battery.py::test_soh_floors_at_eol  # one test
 
-# Training/diagnostics need the 'train' extra (torch, sb3, wandb, matplotlib):
+# Training/measurement need the 'train' extra (torch, sb3, wandb, matplotlib):
 uv run --extra train python scripts/train_sac.py            # trains, evals vs baselines
-uv run --extra train python scripts/diagnose.py --model models/best_model.zip
+uv run --extra train python scripts/measure_ladder.py       # benchmark ladder, no training needed
 ```
 
-Both scripts log to the `energy-storage` wandb project by default; pass `--no-wandb` to skip.
+`scripts/` is now exactly the set of scripts that produce a table or figure in `docs/main.tex`; README.md maps each script to the result it produces. The training scripts log to the `energy-storage` wandb project by default; pass `--no-wandb` to skip.
 
 ## Architecture
 
