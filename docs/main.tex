@@ -85,7 +85,7 @@ We therefore decompose the world model accordingly.
 
 \begin{itemize}
 \item \textbf{The asset physics are known and deterministic, by default.} The State of Charge (SoC) and State of Health (SoH) evolve through well understood electrochemistry, including round-trip efficiency, throughput-based cycling degradation, and calendar ageing.
-\item \textbf{Only the market is stochastic and learned, in the default setup.} Rather than trying to model complex grid-level market drivers, the agent only requires a generative model of 24-hour price vectors. We implement this as an ensemble of hour-autoregressive recurrent networks conditioned on calendar features and historical prices. The agent then learns from the days this model emits rather than from observed ones, which is why a calibration gate stands between the two: the ensemble is used only once its generated days are shown to carry the market's price structure (Section~\ref{sec:calibration-gate}).
+\item \textbf{Only the market is stochastic and learned, in the default setup.} Rather than trying to model complex grid-level market drivers, the agent only requires a generative model of 24-hour price vectors. We implement this as an ensemble of hour-autoregressive recurrent networks conditioned on calendar features and historical prices.
 \end{itemize}
 
 This decomposition means only the dynamics of the market half ever needs to adapt to the changing prices, while the battery half remains fixed. A model-free agent gathers at most 24 real transitions per day, no matter how urgently its policy needs updating. The generative model turns those same 24 observed prices into unlimited imagined training days overnight, so the effective sample rate is bounded by compute rather than by the calendar.
