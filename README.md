@@ -63,7 +63,16 @@ uv run --extra train python scripts/collect_history.py --days 1095 --seed 0
 uv run --extra train python scripts/train_sac.py --models-dir models/sac-year-v3
 ```
 
-### Table I: validation-gate sweep (Section VII-A)
+### Table I: the calibration contract (Section III-C)
+
+Asserted directly by the test suite over a seeded simulated year, so it is
+verified by `uv run pytest -q` rather than by a script:
+
+```bash
+uv run pytest tests/test_market.py -q
+```
+
+### Table II: validation-gate sweep (Section VII-A)
 
 ```bash
 uv run --extra train python scripts/validate_market_model.py --budget-days 90   --history data/history-d90-s0.npz
@@ -98,20 +107,20 @@ uv run --extra train python scripts/plot_dyna_results.py      # writes diagnosti
 The figure reads the JSON rather than hardcoding numbers, so it cannot drift
 away from the tables.
 
-### Table II: infeasible on-asset action requests (Section VII-B)
+### Table III: infeasible on-asset action requests (Section VII-B)
 
 ```bash
 uv run --extra train python scripts/measure_safe_exploration.py    # top block: training-time behaviours
 uv run --extra train python scripts/measure_deployed_clipping.py   # bottom block: trained policies as deployed
 ```
 
-### Table III: zero-shot robustness to transient shocks (Section VII-C)
+### Table IV: zero-shot robustness to transient shocks (Section VII-C)
 
 ```bash
 uv run --extra train python scripts/measure_scenario_robustness.py
 ```
 
-### Tables IV and V, Figures 2 to 4: adaptation to persistent shifts (Section VII-D)
+### Tables V and VI, Figures 2 to 4: adaptation to persistent shifts (Section VII-D)
 
 Run the deployments. This is the most expensive experiment in the paper:
 3 shifts x 6 arms x 10 paired 120-day deployments.
@@ -132,7 +141,7 @@ run for the same seeds as every other arm.
 Then the tables and figures:
 
 ```bash
-uv run --extra train python scripts/adaptation_stats.py            # Tables IV and V
+uv run --extra train python scripts/adaptation_stats.py            # Tables V and VI
 uv run --extra train python scripts/plot_adaptation.py --shift fuel-step      # Figure 2
 uv run --extra train python scripts/plot_adaptation.py --shift capacity-loss  # Figure 3
 uv run --extra train python scripts/plot_adaptation.py --shift cold-regime    # Figure 4
@@ -152,7 +161,7 @@ on night three and never returns:
 uv run --extra train python scripts/measure_ensemble_drift.py
 ```
 
-### Table VI: PINN versus MLP battery surrogate (Section VII-E)
+### Table VII: PINN versus MLP battery surrogate (Section VII-E)
 
 ```bash
 uv run --extra train python scripts/evaluate_battery_model.py --seeds 1 2 3 4 5 6 7 8 9 10
@@ -161,11 +170,11 @@ uv run --extra train python scripts/evaluate_battery_model.py --seeds 1 2 3 4 5 
 Writes `data/battery-model-stage1.npz` and prints the accuracy and
 physical-violation tables for both coverage regimes.
 
-### Table VII: wrong-constraints ablation (Section VII-E1)
+### Table VIII: wrong-constraints ablation (Section VII-E1)
 
 ```bash
 uv run --extra train python scripts/evaluate_wrong_constraints.py
 ```
 
-Uses ten fit seeds and the same training draws and test set as Table VI.
+Uses ten fit seeds and the same training draws and test set as Table VII.
 Writes `data/battery-model-wrong-constraints.npz`.

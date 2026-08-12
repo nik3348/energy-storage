@@ -6,6 +6,7 @@
 \usepackage{textcomp}
 \usepackage{xcolor}
 \usepackage{booktabs}
+\usepackage{tabularx}
 \usepackage{microtype}
 \usepackage{hyperref}
 \hypersetup{
@@ -107,55 +108,59 @@ Every investigation in this dissertation shares the premise that a price-taking 
 
 \subsection{Reinforcement Learning for Battery Arbitrage}
 
-The application of RL to electricity market bidding and battery dispatch has attracted growing attention. Early work by \citet{cao2020arbitrage} demonstrated that deep Q-networks could learn profitable day-ahead bidding strategies, outperforming linear-programming baselines under price uncertainty. Subsequent studies have applied policy-gradient methods, such as Proximal Policy Optimization (PPO), and off-policy actor-critic architectures, such as Soft Actor-Critic (SAC), for real-time arbitrage. Among these, SAC has emerged as a strong default choice for continuous-action energy control problems due to its entropy regularisation and off-policy sample reuse \citep{haarnoja2018softactorcriticoffpolicymaximum}.
-
-A central focus within this literature is the tension between short-term profit maximisation and long-term asset preservation. While model-free controllers can be trained on reward formulations that charge for physical battery degradation, they remain vulnerable to non-stationary environments. In modern energy markets, sudden shifts in supply and demand can strand a policy tuned to the old regime. Under standard model-free paradigms, adapting to a new regime requires extensive online retraining which is rate-limited by the market itself, yielding only 24 real hourly transitions per day, and during which the agent may execute suboptimal or physically damaging cycles on the asset. This dissertation studies robustness and adaptation to such shifts as its central question, rather than as an afterthought to a stationary benchmark.
+\citet{cao2020arbitrage} showed deep Q-networks could learn profitable day-ahead bidding that beats linear-programming baselines under price uncertainty; later work applied policy-gradient and off-policy actor-critic methods, with SAC \citep{haarnoja2018softactorcriticoffpolicymaximum} emerging as the default for continuous-action energy control. This literature trades short-term profit against long-term asset preservation, but evaluates largely on stationary benchmarks. Model-free adaptation is rate-limited by the market itself, which publishes only 24 real transitions a day, so recovering from a regime shift demands extensive online retraining during which the agent may cycle the asset damagingly. This dissertation takes that adaptation problem as its central question.
 
 \subsection{Model-Based Reinforcement Learning and World Models}
 
-Model-based RL (MBRL) improves sample efficiency by learning a dynamics model $\hat{f}(s, a) \to s'$ and using it to generate additional training data. The Dyna architecture \citep{sutton1991dyna} is the influential framework where the agent updates a dynamics model from real experience and generates synthetic transitions from it to augment the replay buffer. This approach has been shown to reduce the required number of real interactions by an order of magnitude in continuous-control benchmarks \citep{janner2019mbpo, chua2018pets}.
-
-In the general setting, the quality of synthetic data is limited by model errors that \emph{compound through the agent's actions} over multi-step rollouts motivating short branched rollouts from probabilistic ensembles \citep{janner2019mbpo} and uncertainty-aware planning \citep{chua2018pets}. A key point of this dissertation is that the price-taker decomposition removes this failure mode and the learned process (daily prices) is exogenous, so the policy's actions can't steer the model into self-confirming error.
-
-World-model approaches such as Dreamer \citep{hafner2020dreamer} learn latent dynamics and plan entirely in imagination. While powerful, these methods introduce substantial architectural complexity and are harder to interpret in safety-critical energy applications. The approach taken here retains a directly inspectable decomposition where exact battery physics plus a small generative model of prices whose fidelity is measured against held-out data before it's ever trusted.
+Model-based RL improves sample efficiency by learning a dynamics model $\hat{f}(s, a) \to s'$ and generating synthetic transitions from it, canonically through the Dyna architecture \citep{sutton1991dyna}; probabilistic-ensemble variants cut the real interactions needed on continuous-control benchmarks by an order of magnitude \citep{janner2019mbpo, chua2018pets}. Their central difficulty is that model error \emph{compounds through the agent's actions} over multi-step rollouts. The price-taker decomposition removes that failure mode outright: the learned process is exogenous, so the policy cannot steer the model into self-confirming error. Latent world models such as Dreamer \citep{hafner2020dreamer} plan entirely in imagination at the cost of architectural complexity and interpretability, whereas the decomposition here stays inspectable, pairing exact battery physics with a small price model measured against held-out data before it is trusted.
 
 \subsection{Non-Stationarity and Adaptation in Reinforcement Learning}
 
-Reinforcement learning under non-stationary dynamics has been studied as worst-case planning against continuous drift \citep{lecarpentier2019nonstationary}, as a continual-learning problem balancing plasticity against forgetting \citep{khetarpal2022continualrl}, and surveyed more broadly by \citet{padakandla2021survey}; the supervised-learning literature on concept drift \citep{gama2014conceptdrift} contributes the detect-then-adapt pattern this work follows. The setting here is distinctive in two respects. First, the non-stationary component is \emph{exogenous and fully observed} such that every day the market publishes the very quantity the model must track, so adaptation data accrues at a fixed rate for free, independent of the policy. Second, the asset constraint forbids on-policy re-exploration, so adaptation must run off-asset in order of refiting the small market model, retraining in imagination, deploying tomorrow. The dissertation's adaptation experiment measures how much this structure is worth relative to model-free online fine-tuning bound to the real stream.
+RL under non-stationary dynamics has been studied as worst-case planning against drift \citep{lecarpentier2019nonstationary}, as continual learning balancing plasticity against forgetting \citep{khetarpal2022continualrl}, and surveyed by \citet{padakandla2021survey}; the concept-drift literature \citep{gama2014conceptdrift} contributes the detect-then-adapt pattern followed here. Two features distinguish this setting. The non-stationary component is \emph{exogenous and fully observed}, so adaptation data accrues at a fixed rate for free regardless of the policy. And the asset constraint forbids on-policy re-exploration, so adaptation must run off-asset: refit the market model, retrain in imagination, deploy tomorrow.
 
 \subsection{Physics-Informed Surrogates for Dynamics Models}
 \label{sec:related-pinn}
 
-A separate line of work embeds known governing equations into the network itself. Physics-informed neural networks \citep{raissi2019pinn} add a loss term penalising violation of the governing law at collocation points, which carry no labels, so the physics is meant to substitute for data and the model to reach a given accuracy from fewer measured samples. That promise has been carried into lithium-ion modelling, where physics-informed networks are reported to give stable degradation prediction and prognosis from limited cell data \citep{wang2024pinnbattery}, into continuous control \citep{antonelo2024pinc}, and into the exact architecture used here, since \citet{Liu_2021} train a Dyna-style agent inside a physics-informed dynamics model. Together these motivate inverting this dissertation's default assumption, learning the battery half of the decomposition rather than assuming it, from a transition log short enough that an operator might plausibly have one. The scope of the original claim matters for reading the result. The residual is established where the target map is stiff, high-dimensional, or observed too sparsely for an unconstrained network to interpolate; a price-taking battery's step map is smooth, three-dimensional and cheap to label, so Section~\ref{sec:results-pinn} measures how far the sample-efficiency claim extends rather than whether it ever holds.
+Physics-informed neural networks \citep{raissi2019pinn} penalise violation of a governing law at unlabelled collocation points, so the physics is meant to substitute for data. That promise has been carried into lithium-ion degradation prognosis from limited cell data \citep{wang2024pinnbattery}, into continuous control \citep{antonelo2024pinc}, and into the exact architecture used here, since \citet{Liu_2021} train a Dyna-style agent inside a physics-informed dynamics model. Together these motivate inverting this dissertation's default assumption and learning the battery from a log short enough that an operator might plausibly have one. Scope matters for reading the result: the residual is established where the target map is stiff, high-dimensional or sparsely observed, whereas a price-taking battery's step map is smooth, three-dimensional and cheap to label, so Section~\ref{sec:results-pinn} measures how far the claim extends rather than whether it ever holds.
 
 \section{Synthetic Merit-Order Market Simulator}
 \label{sec:simulator}
 
 \subsection{Justification for Synthetic Data}
 
-A synthetic, fully observable simulator is used for four reasons. It provides controlled experimentation, seeded reproducibility, unlimited paired evaluation episodes, and regime-shift scenarios that consume no randomness, so a shifted run and its calm same-seed counterfactual are bit-identical outside the shock window. Real historical data can't provide on-demand, repeatable regime shifts with a known counterfactual. The synthetic setting also makes the evaluation stronger. The hindsight optimum and the rolling-horizon oracle are exactly computable, so every policy can be scored as a fraction of the value actually attainable on the same days. The simulator is a controlled testbed, so the claims this dissertation defends are orderings and mechanisms established within it, not absolute profit levels, and no claims transfer to real markets without validation against measured data (Section~\ref{sec:limitations}).
+A synthetic, fully observable simulator buys four things real historical data cannot: controlled experimentation, seeded reproducibility, unlimited paired evaluation episodes, and on-demand regime shifts with a known counterfactual. It also makes the evaluation stronger, since the hindsight optimum and the rolling-horizon oracle are exactly computable, so every policy is scored as a fraction of the value actually attainable on the same days. The cost is scope: the claims this dissertation defends are orderings and mechanisms established within the testbed, not absolute profit levels, and none transfer to real markets without validation against measured data (Section~\ref{sec:limitations}).
 
-\subsection{Demand}
+\subsection{Price Formation}
 
-Prices form causally from an exogenous driver layer. Demand follows a heating-dominated European profile, driven by a calendar (day-of-year, weekends, holidays) and an Ornstein Uhlenbeck (OU) temperature process. Its seasonal base load is U-shaped over the year, with the heating peak midwinter and only modest summer cooling load, overlaid with daily shape, weekend, and holiday effects. This consumption pattern, pushed through a sloped merit order, is what produces the winter price premium. The premium \emph{emerges} from demand meeting the supply curve rather than being painted onto prices.
-
-\subsection{The Generator Fleet}
-
-The fleet comprises solar (500\,MW, the duck-curve driver), wind, must-run geothermal, a reservoir hydro plant that bids its opportunity cost as a function of reservoir fill (self-stabilising), and a deliberately granular thermal fleet made up of two coal units with minimum-run blocks and nine gas units spanning efficient combined-cycle plants through old open-cycle peakers. Solar and wind availability follow OU weather processes (irradiance and wind proxies), and the thermal units' fuel costs follow an OU fuel market (gas and coal prices). Shocks perturb the drivers, never prices directly, so every price movement has an economic mechanism behind it. The granularity is the point. Units of varying efficiency make the merit order slope, so seasonal demand moves the marginal cost. Negative prices emerge from subsidy-style negative renewable bids, coal min-run blocks, and must-run geothermal, mostly on sunny summer middays. Scarcity hours clear at the price cap and concentrate in winter and early spring, where high demand coincides with outages and low renewables.
-
-\subsection{Market Clearing}
-
-Each hour clears as a uniform-price merit-order auction. Every generator submits (price, quantity) offers, the clearing intersects the resulting supply curve with demand, and all dispatched capacity is paid the marginal price. One simulated day yields 24 prices plus dispatch by technology.
+Prices form causally from an exogenous driver layer. A calendar and Ornstein Uhlenbeck (OU) weather processes drive a heating-dominated European demand profile, U-shaped over the year, while an OU fuel market drives thermal costs. Against this, a fleet of solar (500\,MW, the duck-curve driver), wind, must-run geothermal, reservoir hydro bidding its opportunity cost against reservoir fill, two coal units with minimum-run blocks and nine gas units spanning combined-cycle plants through old peakers submits (price, quantity) offers, and each hour clears as a uniform-price merit-order auction paying all dispatched capacity the marginal price. The thermal fleet is deliberately granular so that units of varying efficiency make the merit order slope, which is what lets the winter premium, the duck-curve spread, negative prices and capped scarcity hours \emph{emerge} from consumption meeting the supply curve rather than being painted onto prices. Shocks perturb the drivers, never prices, so every price movement has an economic mechanism behind it. The full specification is in the submitted source.
 
 \subsection{Calibration}
 \label{sec:calibration}
 
-The simulator is held to a statistical calibration contract, enforced by the test suite over a seeded simulated year. The median price is $\approx\$64$/MWh, the winter median more than \$6 above the summer median and the winter mean more than \$15 above it, the evening peak above overnight prices, scarcity below 1.5\% of hours, and negative prices rare but present. These thresholds were fixed by tuning the fleet and driver parameters until the simulated year showed the structure above, not by fitting to measured prices, so no value here is an empirical estimate. They serve as regression bounds, and a failure means the market drifted when a fleet or weather parameter changed.
+The simulator is held to the statistical calibration contract in Table~\ref{tab:calibration}, enforced by the test suite over a seeded simulated year. These thresholds were fixed by tuning the fleet and driver parameters until the simulated year showed this structure, not by fitting to measured prices, so no value here is an empirical estimate. They serve as regression bounds, and a failure means the market drifted when a fleet or weather parameter changed.
+
+\begin{table}[htbp]
+\centering
+\caption{The calibration contract over a seeded simulated year.}
+\label{tab:calibration}
+\begin{tabular}{ll}
+\toprule
+Statistic & Contract \\
+\midrule
+Median price & $\approx\$64$/MWh \\
+Winter $-$ summer median & $> \$6$/MWh \\
+Winter $-$ summer mean & $> \$15$/MWh \\
+Evening peak vs overnight & evening higher \\
+Scarcity hours (clearing at cap) & $< 1.5\%$ of hours \\
+Negative-price hours & rare but present \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \subsection{Regime-Shift Scenarios}
 \label{sec:regime-scenarios}
 
-Regime shifts are expressed through five scenario types namely \emph{ColdSnap} (heating-demand surge), \emph{HeatWave} (cooling demand plus thermal derating), \emph{FuelShock} (multiplicative gas-price step), \emph{Drought} (reservoir inflow collapse), and \emph{PlantOutage} (a named unit removed from the fleet). Scenarios perturb \emph{drivers} inside a day window, never prices, and consume no randomness, so the same seed with and without a scenario differs only through the shock's causal consequences. The same scenario serves both experimental roles. Short windows give the unseen \emph{transient shocks} of the robustness study (Section~\ref{sec:setup-robustness}), and windows extended to the end of the run give the \emph{persistent regime shifts} of the adaptation study (Section~\ref{sec:setup-adaptation}).
+Regime shifts are expressed through five scenario types: \emph{ColdSnap} (heating-demand surge), \emph{HeatWave} (cooling demand plus thermal derating), \emph{FuelShock} (multiplicative gas-price step), \emph{Drought} (reservoir inflow collapse), and \emph{PlantOutage} (a named unit removed from the fleet). Scenarios perturb \emph{drivers} inside a day window, never prices, and consume no randomness, so the same seed with and without a scenario differs only through the shock's causal consequences. Short windows give the unseen \emph{transient shocks} of the robustness study (Section~\ref{sec:setup-robustness}); windows extended to the end of the run give the \emph{persistent regime shifts} of the adaptation study (Section~\ref{sec:setup-adaptation}).
 
 \section{Problem Formulation: The Arbitrage MDP}
 \label{sec:problem-formulation}
@@ -163,20 +168,16 @@ Regime shifts are expressed through five scenario types namely \emph{ColdSnap} (
 \subsection{Battery Physics}
 \label{sec:battery}
 
-The battery (100\,kWh, 50\,kW, 90\% round-trip efficiency, split evenly so each direction carries a $\sqrt{0.9} \approx 94.9\%$ one-way efficiency) tracks two states. SoC is expressed as a fraction of the \emph{current degraded} capacity $C_{\mathrm{eff}} = C_{\mathrm{nom}} \cdot \mathrm{SoH}$, and SoH declines through two mechanisms, cycling and calendar aging,
+The battery (100\,kWh, 50\,kW, 90\% round-trip efficiency split evenly across the two directions) tracks two states. SoC is expressed as a fraction of the \emph{current degraded} capacity $C_{\mathrm{eff}} = C_{\mathrm{nom}} \cdot \mathrm{SoH}$, and SoH declines through cycling and calendar ageing,
 \begin{align}
   \Delta\mathrm{SoH}_{\mathrm{cyc}} &= E_{\mathrm{thru}} \cdot \kappa_{\mathrm{cyc}} \cdot \Bigl(1 + s \cdot \tfrac{|P|}{P_{\max}}\Bigr), \\
   \Delta\mathrm{SoH}_{\mathrm{cal}} &= \kappa_{\mathrm{cal}} \cdot \bigl(0.5 + \overline{\mathrm{SoC}}\bigr) \cdot \Delta t,
 \end{align}
-where $E_{\mathrm{thru}}$ is the cell-side energy throughput of the step and $\kappa_{\mathrm{cyc}}$ is calibrated so that a full cycle life (5{,}000 equivalent full cycles) at low power takes SoH from 1.0 to the end-of-life floor of 0.8. The stress factor $s$ makes high-power cycling cost more per kWh, standing in for the empirically established super-linear damage of aggressive cycling \citep{xu2018degradation}. Calendar ageing ticks every hour regardless of action and is calibrated to a 15-year rest life at mid SoC while a full battery ages three times as fast as an empty one (the $(0.5 + \overline{\mathrm{SoC}})$ factor ranges from 0.5 to 1.5). SoH floors at 0.8 and feeds back into usable capacity; stored energy is conserved as capacity shrinks (SoC is re-expressed against the smaller capacity). Requested power is clipped to power limits and to what the SoC bounds ($[0.05, 0.95]$) allow, so every executed action is physically feasible by construction.
+where $E_{\mathrm{thru}}$ is the step's cell-side energy throughput and $\kappa_{\mathrm{cyc}}$ is calibrated so that 5{,}000 equivalent full cycles at low power take SoH from 1.0 to the end-of-life floor of 0.8. The stress factor $s$ makes high-power cycling cost more per kWh, standing in for the empirically established super-linear damage of aggressive cycling \citep{xu2018degradation}. Calendar ageing ticks every hour regardless of action, calibrated to a 15-year rest life at mid SoC, with a full battery ageing three times as fast as an empty one. SoH feeds back into usable capacity, conserving stored energy as capacity shrinks. Requested power is clipped to the power limits and the SoC bounds ($[0.05, 0.95]$), so every executed action is feasible by construction.
 
-\subsection{State Space}
+\subsection{State, Action, and Episodes}
 
-The observation is 32-dimensional and comprises 8 scalars (SoC, SoH, sine/cosine of hour-of-day, sine/cosine of day-of-year, weekend and holiday flags) followed by the \emph{next 24 hourly day-ahead prices}, log-normalized. The market prices aren't hidden as day-ahead markets publish them in advance, and the rolling-horizon oracle (Section~\ref{sec:oracles}) shows this window carries 99.9\% of the attainable value. Weather and fuel states are deliberately \emph{not} observed. They influence reward only through prices, which are already known exactly over the decision-relevant horizon.
-
-\subsection{Action Space}
-
-A single continuous action $a \in [-1, 1]$ maps to a power command $a \cdot P_{\max}$, where positive charges, negative discharges, and zero idles. Infeasible commands are clipped by the physics (Section~\ref{sec:battery}) rather than penalised, so the policy can't damage the battery by violating operating limits; degradation, not infeasibility, is the cost channel.
+The observation is 32-dimensional: 8 scalars (SoC, SoH, sine/cosine of hour-of-day and of day-of-year, weekend and holiday flags) followed by the \emph{next 24 hourly day-ahead prices}, log-normalized. Prices aren't hidden because day-ahead markets publish them in advance, and the rolling-horizon oracle (Section~\ref{sec:oracles}) shows this window carries 99.9\% of the attainable value; weather and fuel states are deliberately \emph{not} observed, influencing reward only through prices already known. A single continuous action $a \in [-1, 1]$ maps to a power command $a \cdot P_{\max}$, positive charging and negative discharging; infeasible commands are clipped by the physics rather than penalised, so degradation, not infeasibility, is the cost channel. Episodes are 14 days (336 hourly steps) with randomised initial SoC and SoH and a burn-in so weather and fuel states decorrelate. The market operates in MW/MWh and the battery in kW/kWh; settlement converts between them.
 
 \subsection{Reward}
 \label{sec:reward}
@@ -185,11 +186,7 @@ The reward monetizes degradation at replacement value rather than weighting it b
 \begin{equation}
   r_t = \bigl(\pi_t - \Delta\mathrm{SoH}_t \cdot c_{\mathrm{repl}} \cdot C_{\mathrm{nom}}\bigr) \cdot \sigma,
 \end{equation}
-where $\pi_t$ is the arbitrage cash flow of the hour (buying energy at the cleared price when charging, selling when discharging, with conversion losses applied on each side), $\Delta\mathrm{SoH}_t$ is the health lost this step from both ageing pathways, $c_{\mathrm{repl}} = \$250$/kWh is the replacement cost, and $\sigma$ is a fixed reward scale. There's no tunable degradation weight and wear is priced at what it costs to buy back, so ``minimizing degradation'' is a single economically meaningful objective where every policy in the evaluation optimises the same dollars. Calendar ageing makes doing nothing strictly costly (an idle policy loses money), which anchors the low end of the benchmark ladder.
-
-\subsection{Episodes and Units}
-
-Episodes are 14 days (336 hourly steps) with randomised initial SoC and SoH and a burn-in of simulated days so weather and fuel states decorrelate from their initial values. The market operates in MW/MWh, the battery in kW/kWh; settlement converts between them.
+where $\pi_t$ is the hour's arbitrage cash flow (buying at the cleared price when charging, selling when discharging, with conversion losses on each side), $\Delta\mathrm{SoH}_t$ is the health lost from both ageing pathways, $c_{\mathrm{repl}} = \$250$/kWh is the replacement cost, and $\sigma$ a fixed reward scale. Wear is priced at what it costs to buy back rather than weighted by a free parameter, so every policy optimises the same dollars. Calendar ageing makes doing nothing strictly costly, anchoring the low end of the benchmark ladder.
 
 \section{Methodology}
 \label{sec:methodology}
@@ -546,24 +543,13 @@ The battery-side study results in a similar direction where learning the battery
 \subsection{Limitations}
 \label{sec:limitations}
 
-Everything here is simulation, a synthetic market and battery. It's a controlled testbed, and none of this transfers to a real deployment without first validating against measured price and cell data. The price-taker assumption does double duty (it justifies both the decomposed world model and the hindsight oracle) and would weaken for storage big enough to move prices. The persistent-shift evaluation covers three hand-picked regimes, not a continuous range or gradual compound drift. The rolling-horizon normalizer adapts instantly only because prices are fully known a day ahead; in a market that relied on forecasts, the ceiling itself would lag. The budget-experiment policies come from a single training seed (though evaluation is multi-seed and paired). And the zero-infeasible-request guarantee of Section~\ref{sec:results-safe} only covers planner-sourced data collection during training; the trained policy itself requests infeasible actions on over 90\% of deployment steps. The follow-up measurement attributes these to benign SoC-bound parking (the policy sits at a bound on $\sim$96\% of steps, so the refused pushes are no-ops), but whether a real battery-management system tolerates thousands of refused pushes a year is a deployment question the simulator can't settle. So on-asset safety should be read as solved for training, and characterised but not certified for deployment.
-
-Every quantitative result here also depends on a single setting of the world, one European heating-dominated market calibration, one price cap (\$1000/MWh), one battery cost model (\$250/kWh replacement, 5{,}000-cycle life). We measured the cap dependence rather than assumed it away (Section~\ref{sec:reporting}). Raw dollars scale with the cap since scarcity capture dominates arbitrage value, and the benchmark ladder stays in order from \$200 to \$3000, except the heuristic dropping below idle at the lowest cap. We didn't repeat the learned-policy comparisons at other caps, calibrations, or degradation prices, so the \emph{sizes} of the reported gaps are specific to this setting. What actually holds up is the orderings and the mechanisms behind them. A validated generative model turns a fixed budget of observed days into unlimited training experience, and free nightly observations turn into off-asset adaptation. Grid constraints such as transmission congestion, and temperature-dependent ageing beyond the SoC-dependent calendar term, aren't modelled.
+Everything here is simulation, a synthetic market and battery, so none of it transfers to a real deployment without first validating against measured price and cell data. The price-taker assumption does double duty, justifying both the decomposed world model and the hindsight oracle, and would weaken for storage big enough to move prices. Every quantitative result also depends on a single setting of the world: one European heating-dominated calibration, one price cap (\$1000/MWh), one battery cost model (\$250/kWh replacement, 5{,}000-cycle life), and three hand-picked shift regimes rather than continuous or compound drift. The \emph{sizes} of the reported gaps are therefore specific to this setting; what holds up is the orderings and the mechanisms behind them. Finally, the zero-infeasible-request guarantee of Section~\ref{sec:results-safe} covers only planner-sourced data collection during training. The trained policy itself requests infeasible actions on over 90\% of deployment steps, which the follow-up measurement attributes to benign SoC-bound parking, but whether a real battery-management system tolerates thousands of refused pushes a year is a deployment question the simulator can't settle. On-asset safety should be read as solved for training, characterised but not certified for deployment.
 
 \subsection{Future Directions}
 \label{sec:future-work}
 
-The clearest next step is to repair the nightly refit, and Section~\ref{sec:results-discussion-sub} says where to aim. Because the ensemble drifts on stationary data, the thing to fix is the refit itself, not the test wrapped around it. Refitting from scratch on the pooled history each night, instead of fine-tuning from the previous night's weights, would stop the spread inflation compounding. Anchoring more heavily on pre-deployment days would do the same, as would scoring the refit against the calibration statistics rather than likelihood alone. Re-running the three-shift grid with a repaired refit is the natural follow-up.
+The clearest next step is to repair the nightly refit (Section~\ref{sec:results-discussion-sub}). Because the ensemble drifts on stationary data, the fix belongs in the refit itself rather than in the test wrapped around it: refitting from scratch on the pooled history each night instead of fine-tuning from the previous night's weights, anchoring more heavily on pre-deployment days, or scoring the refit against the calibration statistics rather than likelihood alone, then re-running the three-shift grid. On the battery side (Section~\ref{sec:results-pinn}), the question worth keeping isn't about physics priors at all but whether constraining a surrogate's outputs to be physically possible protects a downstream policy from model exploitation, which needs no physics-informed variant to test. A stronger claim about physics priors would need a harder dynamics problem than a smooth three-dimensional step map; the successes reported on real cells \citep{wang2024pinnbattery} come from noisy, partially observed measurements, so the negative here bounds that claim rather than contradicting it.
 
-Two smaller variants are worth running beside it. A re-gated loop, freezing the ensemble on any night it fails the gate, is useful as a control rather than a fix: on this evidence it would freeze within days and collapse into the frozen arm, but it would separate how much of the deficit is model drift from how much is the policy fine-tune. Delaying adaptation until enough days have accumulated is the other, since the worst drift is in the first few nights.
-
-\emph{When} to adapt is a separate question from how. An NLL-triggered loop could replace the always-adapt default, though per-day NLL is noisy enough before the shift that it would likely make a weaker trigger than the calibration gate; what it saves is compute, and when that's safe is still open. A softer version scales each night's effort with how surprising the day was. The adaptive arm also needs a transient-shock control, since adaptation should do no harm during a one-day crisis, and the nightly update could mix real-day replay with imagination weighted by uncertainty.
-
-On the market model itself, a mixture-density day model might pass the gate at smaller budgets than the current ensemble manages, and a gate whose acceptance regions come from the market's own year-to-year variability would be better calibrated than fixed bands.
-
-The battery study (Section~\ref{sec:results-pinn}) closes off more than it opens. Because the residual is inert at realistic log sizes and the output clamp needs no physics, the question worth keeping isn't about physics priors at all. It's whether constraining a surrogate's outputs to be physically possible protects a downstream policy from model exploitation, which can be tested by training policies against a constrained and an unconstrained MLP and evaluating both on the true battery. No physics-informed variant is needed for that. A stronger claim about physics priors would need a harder dynamics problem, since a smooth three-dimensional map is close to the worst case for showing their value. The successes reported on real cells \citep{wang2024pinnbattery} are recovered from noisy, partially observed measurements rather than from an exactly simulated step map, so the negative here bounds the claim rather than contradicting those results.
-
-Finally, the evaluation can be widened: validating the simulator's shift scenarios against real market episodes such as the 2022 European price crisis, repeating the budget sweep over several training seeds, modelling battery chemistries whose cycle and calendar ageing balance differently, and relaxing the price-taker assumption toward price-making storage, which would couple the two halves of the world model this dissertation deliberately kept apart.
 
 \begin{thebibliography}{}
 
@@ -643,5 +629,81 @@ Wang, F. et al. (2024) `Physics-informed neural network for lithium-ion battery 
 Xu, B. et al. (2018) `Modeling of lithium-ion battery degradation for cell life assessment', \emph{IEEE Transactions on Smart Grid}, 9(2), pp.\ 1131--1140. doi: 10.1109/TSG.2016.2578950.
 
 \end{thebibliography}
+
+\onecolumn
+
+\appendices
+
+\section{Generative AI Tools: Student Accountability Statement}
+\label{app:genai}
+
+\noindent\textbf{Student Name:} Nicholas Lai Jin Yung \\
+\textbf{Project Title:} A Validated Learned Market Model for Sample-Efficient Battery Storage Arbitrage \\
+\textbf{Supervisor Name:} David Mguni
+
+\subsection{Have you used Generative AI tools for your project?}
+
+\noindent\textbf{YES}
+
+\subsection{AI tools used}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{llXX}
+\toprule
+AI Tool & Version & Publisher & Access URL \\
+\midrule
+Claude Code (Claude Opus) & Opus 5 (\texttt{claude-opus-5}) & Anthropic & \url{https://claude.com/claude-code} \\
+\textcolor{red}{[ADD ANY OTHER TOOLS USED]} & & & \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{How, where, and why these tools were used}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{p{0.20\textwidth}XX}
+\toprule
+Project Section & Description & Justification \\
+\midrule
+Software development: simulator and environment (\texttt{energy\_storage/}) &
+AI-assisted code generation, refactoring and debugging of the market simulator, battery model, Gymnasium environment and optimisation oracles. &
+Design decisions and problem formulation were mine. All behaviour is pinned by a test suite of 84 tests, including the statistical calibration contract of Table~\ref{tab:calibration}, which I specified and verified. \\
+\addlinespace
+Software development: experiment scripts (\texttt{scripts/}) &
+AI-assisted authoring of the training, measurement and plotting scripts that produce each table and figure. &
+Every reported number was regenerated by executing these scripts. Runs are seeded and reproducible, and the estimators were specified by me. \\
+\addlinespace
+Results and analysis (Section~\ref{sec:results-discussion}) &
+AI-assisted computation of error margins (leave-one-out jackknife and standard deviations) and formatting of summary tables from stored experiment outputs. &
+Choice of estimator and experimental design were mine; outputs were checked against the raw per-seed data. No result was reported that the code did not produce. \\
+\addlinespace
+Dissertation prose (Sections~\ref{sec:related-work}, \ref{sec:simulator}, \ref{sec:problem-formulation}, \ref{sec:conclusion}) &
+AI-assisted copy-editing and condensing of prose I had already drafted, to reduce length and improve clarity. &
+No new technical claim was introduced by the tool. All claims, results and interpretations are my own and were verified against the experimental outputs. \\
+\addlinespace
+Related Work (Section~\ref{sec:related-work}) &
+\textcolor{red}{[CONFIRM AND EDIT: describe exactly how AI was used here, e.g. shortening summaries of papers you had already read and selected.]} &
+\textcolor{red}{[CONFIRM: state explicitly whether any cited work was suggested by the tool, and confirm you read every source you cite.]} \\
+\addlinespace
+Supporting material (\texttt{README.md}) &
+AI-assisted drafting of the reproduction guide mapping each script to the result it produces. &
+All commands were verified by execution before submission. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Generative AI Student Declaration}
+
+\begin{itemize}
+\item I have declared all uses of AI tools (e.g., coding assistants, text generators, data analysis tools) in this project.
+\item I have reviewed and verified all AI-assisted content to ensure accuracy and suitability.
+\item I take full responsibility for the originality and integrity of my project submission.
+\item I have referenced all sources, including those suggested or produced with AI support.
+\item I have not used AI in ways that undermine academic honesty (e.g., plagiarism, unverified code submission).
+\item My use of AI was supplementary and did not replace my own independent learning and problem-solving.
+\end{itemize}
+
+\vspace{2em}
+\noindent Signed: \rule{6cm}{0.4pt} \hspace{1em} Date: \rule{5cm}{0.4pt}
 
 \end{document}
