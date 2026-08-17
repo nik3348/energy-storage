@@ -32,7 +32,7 @@
 \IEEEauthorblockN{Nicholas Lai Jin Yung}
 \IEEEauthorblockA{
 220947084 \\
-David Mguni \\
+Dr David Mguni \\
 MSc Artificial Intelligence \\
 School of Electronic Engineering and Computer Science \\
 Queen Mary University of London
@@ -140,24 +140,6 @@ Prices form causally from an exogenous driver layer. A calendar and Ornstein Uhl
 \label{sec:calibration}
 
 The simulator is held to the statistical calibration contract in Table~\ref{tab:calibration}, enforced by the test suite over a seeded simulated year. These thresholds were fixed by tuning the fleet and driver parameters until the simulated year showed this structure, not by fitting to measured prices, so no value here is an empirical estimate. They serve as regression bounds, and a failure means the market drifted when a fleet or weather parameter changed.
-
-\begin{table}[htbp]
-\centering
-\caption{The calibration contract over a seeded simulated year.}
-\label{tab:calibration}
-\begin{tabular}{ll}
-\toprule
-Statistic & Contract \\
-\midrule
-Median price & $\approx\$64$/MWh \\
-Winter $-$ summer median & $> \$6$/MWh \\
-Winter $-$ summer mean & $> \$15$/MWh \\
-Evening peak vs overnight & evening higher \\
-Scarcity hours (clearing at cap) & $< 1.5\%$ of hours \\
-Negative-price hours & rare but present \\
-\bottomrule
-\end{tabular}
-\end{table}
 
 \subsection{Regime-Shift Scenarios}
 \label{sec:regime-scenarios}
@@ -340,24 +322,6 @@ Negative share & 0.007 & 0.007~\checkmark & 0.002~\checkmark & 0.001~\checkmark 
 
 Whether a year of prices yields a usable model also depends on which year. Repeating the $D=365$ fit over five independent draws, each collecting its own history and fitting its own ensemble, passes the gate once (Table~\ref{tab:gate-seeds}). The failures concentrate on a single criterion. At seeds 2, 3 and 4 six of the seven criteria pass and only the winter mean gap fails, the ensemble putting the synthetic winter premium at \$9.5 to \$10.9 against a real premium of \$22 to \$28, so it reproduces the median seasonal gap while smoothing the mean away. Seed 1 is a different case, failing four criteria: one of its five ensemble members converges to a far worse loss than its siblings, and since a member is drawn per generated market, roughly a fifth of its imagined days come from a badly fitted network. The binding constraint on the method is therefore the fit rather than the policy learning. Dyna works when the model is good enough to admit, and one year of observed prices produces such a model unreliably.
 
-\begin{table}[htbp]
-\centering
-\caption{Winter mean price gap (\$/MWh) across five independent $D{=}365$ draws, the criterion that decides the gate.}
-\label{tab:gate-seeds}
-\small
-\begin{tabular}{lrrl}
-\toprule
-Draw & Real & Synthetic & Gate \\
-\midrule
-seed 0 & 27.5 & 17.1 & \textbf{PASS} \\
-seed 1 & 13.7 & $-130.1$ & FAIL (4 criteria) \\
-seed 2 & 22.2 & 10.9 & FAIL \\
-seed 3 & 25.1 & 9.5 & FAIL \\
-seed 4 & 28.0 & 10.5 & FAIL \\
-\bottomrule
-\end{tabular}
-\end{table}
-
 At $D=365$, on the draw that passes, dyna reaches $70.7\pm2.6\%$ of hindsight and replay $54.2\pm5.4\%$, as means over five training runs on that same pinned history and ensemble (Table~\ref{tab:fixed-history-sweep}). The paired per-episode difference is positive at every seed, averaging $+\$4.62\pm0.61$ per episode over the five. Dyna is also the steadier arm, spanning 66.2 to 72.7\% against replay's 46.6 to 59.6\%, which fits their training conditions: replay cycles the same $D$ stored days, so what it learns depends on where exploration lands in a small fixed set, while dyna draws fresh imagined days throughout.
 
 Dyna's mean of $70.7\pm2.6\%$ sits 1.8 points below the unlimited-data reference's $72.5\pm13.1\%$, well inside its own run-to-run spread, so one year of real history through a gated model recovers most of the model-free ceiling on two orders of magnitude less data. 
@@ -389,26 +353,6 @@ More gradient steps cannot be the reason, since replay takes as many as it wants
 
 Only the rolling-horizon planner generates real transitions during Dyna training, and it solves a dynamic program over an SoC grid confined to $[\mathrm{soc\_min}, \mathrm{soc\_max}]$, so an infeasible move is never in its search space to begin with. SAC's own exploration still tries infeasible actions constantly, since that's how RL exploration works, but only inside the imagined market against the exact battery physics, never against the real asset. So training doesn't avoid violations, it just keeps them off the physical battery. Table~\ref{tab:safe-exploration} (top block) confirms this over 20 paired 14-day episodes. A model-free agent exploring on the asset requests something infeasible on $35.8\pm3.3\%$ of its steps, mostly during warmup; even the heuristic hits $29.4\pm0.1\%$ while the planner hits zero.
 
-\begin{table*}[t]
-\centering
-\caption{Infeasible on-asset action requests, an SoC bound throttling more than 1\% of the requested energy. 20 paired 14-day episodes, mean $\pm$ std over episodes; the middle column extrapolates to a 365-day on-asset budget at the mean rate. Top block: behaviours that would source training transitions. Bottom block: trained policies at evaluation, with their share of steps parked within 0.1 of an SoC bound.}
-\label{tab:safe-exploration}
-\begin{tabular}{lrrr}
-\toprule
-On-asset behaviour & Infeasible-request rate & Per 365-day budget & Near-bound share \\
-\midrule
-Random (model-free warmup exploration) & $35.8\pm3.3\%$ & $\approx$3{,}100 & n/a \\
-Heuristic (fixed rule) & $29.4\pm0.1\%$ & $\approx$2{,}600 & n/a \\
-Rolling-horizon planner (Dyna data source) & $0.0\pm0.0\%$ & 0 & n/a \\
-Idle & $0.0\pm0.0\%$ & 0 & n/a \\
-\midrule
-Trained dyna-365 (deployed, deterministic) & $92.8\pm6.7\%$ & $\approx$8{,}129 & $95.6\pm4.4\%$ \\
-Trained replay-365 (deployed, deterministic) & $95.2\pm5.8\%$ & $\approx$8{,}343 & $96.2\pm4.3\%$ \\
-Trained unlimited-data (deployed, deterministic) & $95.1\pm4.9\%$ & $\approx$8{,}334 & $96.5\pm3.4\%$ \\
-\bottomrule
-\end{tabular}
-\end{table*}
-
 But that guarantee doesn't survive deployment. Table~\ref{tab:safe-exploration}'s bottom block shows all three trained checkpoints requesting an SoC-throttled action on over 90\% of steps, and dyna-365 ($92.8\pm6.7\%$) is statistically indistinguishable from replay-365 ($95.2\pm5.8\%$) and the fully model-free unlimited-data policy ($95.1\pm4.9\%$).
 
 Why? The natural suspicion is careless training, but a follow-up measurement points elsewhere. We recorded, for the same episodes, the share of steps each deployed policy spends with its SoC already within 0.1 of an operating bound (the table's final column), and it tracks the request rate almost exactly: $95.6\pm4.4\%$ for dyna-365, and indistinguishably for the other two arms. A trained policy learns to sit near full or near empty, since that's what buying low and selling high looks like; once parked at a bound, almost no room is left, so any further push in the same direction gets throttled. The near-coincidence of the two columns says the requests are overwhelmingly of this parked kind, pushes whose executed effect is a no-op, rather than deep violations mid-range. That is also why the training method stops mattering: the cause is ordinary converged-policy behaviour, not careless training, so there's no reason the safer, off-asset pipeline would avoid it any more than the other two arms do. So RQ2's answer splits cleanly. During data collection the answer is yes, and it's worth roughly 3{,}100 avoided infeasible requests per training year (Table~\ref{tab:safe-exploration}, top block). After deployment the answer is no, but the follow-up shows the residual requests are bound-parking pressure rather than dangerous excursions; what a real battery-management system would make of $\sim$8{,}000 such refused pushes a year, benign or not, is a deployment question this simulator can't settle (Section~\ref{sec:limitations}).
@@ -438,59 +382,7 @@ unlimited-data & $72.6\pm13.1$ & $90.8\pm1.9$ & $83.0\pm7.5$ & $56.4\pm6.4$ & $7
 
 No, across all three shifts and 10 paired deployments each, adaptive-dyna never beats simply freezing the pre-shift policy (Table~\ref{tab:adaptation-results}). Both arms run identical deployments, so the paired difference is the test: frozen-dyna's post-shift capture exceeds adaptive-dyna's by $16.3\pm3.5$, $11.0\pm1.4$ and $8.9\pm1.7$ percentage points on fuel-step, capacity-loss and cold-regime. Adaptive-dyna is behind before the shift even begins, by $22.0\pm4.1$ points on fuel-step, its capture curve running below frozen-dyna's from the first week and only closing the gap around day 28 (Figure~\ref{fig:adapt-fuel}). Table~\ref{tab:adaptation-settled} splits that deficit in two: an acute startup transient over the first fortnight, while the ensemble fine-tunes on a data-starved history, and a smaller steady-state penalty that never closes.
 
-\begin{table*}[t]
-\centering
-\caption{Adaptation results, all three shifts, 10 paired deployments each. Capture is pooled 7-day net profit over the same-window oracle, $\pm$ leave-one-deployment-out jackknife std; regret is mean $\pm$ std over deployments; recovery lag is days after $T$ to regain 90\% of an arm's \emph{own} pre-shift capture (never = not within the 90-day horizon).}
-\label{tab:adaptation-results}
-\begin{tabular}{llrrrr}
-\toprule
-Shift & Arm & Pre capture (\%) & Post capture (\%) & Recovery lag & Regret (\$) \\
-\midrule
-fuel-step & adaptive-dyna & $66.5\pm10.3$ & $37.1\pm7.2$ & 19d & $231\pm85$ \\
-fuel-step & frozen-dyna & $88.5\pm8.0$ & $53.4\pm8.1$ & 20d & $172\pm47$ \\
-fuel-step & frozen-ideal & $91.8\pm5.0$ & $41.6\pm8.7$ & never & $214\pm74$ \\
-fuel-step & online-ft & $85.0\pm5.8$ & $12.3\pm8.3$ & never & $328\pm193$ \\
-fuel-step & heuristic & $54.7\pm25.3$ & $27.1\pm9.5$ & 14d & $282\pm111$ \\
-\midrule
-capacity-loss & adaptive-dyna & $63.4\pm14.3$ & $77.7\pm4.6$ & 1d & $218\pm119$ \\
-capacity-loss & frozen-dyna & $90.2\pm7.2$ & $88.7\pm3.5$ & 7d & $110\pm54$ \\
-capacity-loss & frozen-ideal & $90.5\pm5.1$ & $91.1\pm2.1$ & 1d & $90\pm55$ \\
-capacity-loss & online-ft & $78.2\pm6.7$ & $66.0\pm6.6$ & 9d & $348\pm301$ \\
-capacity-loss & heuristic & $54.5\pm25.1$ & $55.2\pm6.2$ & 3d & $467\pm309$ \\
-\midrule
-cold-regime & adaptive-dyna & $71.2\pm17.4$ & $74.0\pm3.1$ & 8d & $857\pm858$ \\
-cold-regime & frozen-dyna & $90.3\pm7.2$ & $82.9\pm4.2$ & 1d & $546\pm695$ \\
-cold-regime & frozen-ideal & $90.6\pm5.1$ & $87.6\pm2.0$ & 1d & $394\pm443$ \\
-cold-regime & online-ft & $80.4\pm7.7$ & $83.8\pm1.6$ & 1d & $538\pm412$ \\
-cold-regime & heuristic & $54.5\pm25.1$ & $69.8\pm1.7$ & 1d & $982\pm851$ \\
-\bottomrule
-\end{tabular}
-\end{table*}
-
-\begin{table}[htbp]
-\centering
-\caption{Settled capture, adaptive-dyna versus frozen-dyna: calm windows fully inside days 20--29 (after the startup transient), post-shift windows fully inside days 37--119. Pooled capture $\pm$ jackknife std, \%.}
-\label{tab:adaptation-settled}
-\scriptsize
-\begin{tabular}{lrrrr}
-\toprule
-Shift & Adapt.\ (calm) & Frozen (calm) & Adapt.\ (post) & Frozen (post) \\
-\midrule
-fuel-step & $83.7\pm9.0$ & $94.0\pm5.1$ & $40.7\pm7.9$ & $55.6\pm8.8$ \\
-capacity-loss & $80.3\pm11.0$ & $93.4\pm3.8$ & $78.5\pm3.4$ & $89.7\pm2.4$ \\
-cold-regime & $81.8\pm9.9$ & $93.8\pm3.7$ & $75.1\pm3.1$ & $82.3\pm4.5$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
 None of the pre-registered hypotheses (Section~\ref{sec:setup-adaptation}) survive. Recovery lag orders differently on every shift, and is measured against an arm's \emph{own} pre-shift level, so adaptive-dyna ``recovering'' only means returning to an already-worse baseline. Frozen-dyna copes worst with the pure level shift predicted to suit it best (53.4\% on fuel-step, Figure~\ref{fig:adapt-fuel}, where every arm falls away at $T$ and several spend weeks at negative capture) and best with the structural shift predicted to be hardest (88.7\% on capacity-loss, where the frozen arms hold their pre-shift capture almost exactly). The detection trace, the last of the four metrics, fails outright. The largest per-day NLL of the entire deployment lands on day 2, twenty-eight days before the shift, and $T$ itself carries no signature distinguishable from ordinary day-to-day noise, so the statistic is too noisy to trigger anything on its own. The post-fine-tune trace, by contrast, sits pinned near its floor throughout, so each night's refit does fit the day it has just seen. Likelihood on the newest day and calibration of the generated distribution come apart, and it is the second that the policy needs (Section~\ref{sec:results-discussion-sub}).
-
-\begin{figure*}[t]
-\centering
-\includegraphics[width=\textwidth]{adaptation_fuel-step.png}
-\caption{Capture curves and NLL detection trace, fuel-step shift, mean over 10 paired seeds ($\pm$SEM). Shown as the representative case; the other two shifts are reported in Table~\ref{tab:adaptation-results}.}
-\label{fig:adapt-fuel}
-\end{figure*}
 
 \subsubsection{Where the shortfall comes from}
 \label{sec:results-discussion-sub}
@@ -504,11 +396,11 @@ That timing also rules out the obvious repair. Re-gating the nightly refit, free
 \subsection{Does a Physics Prior Need Fewer Transitions?}
 \label{sec:results-pinn}
 
-No, and not even in the small-$N$ regime a PINN is meant to own (Section~\ref{sec:related-pinn}, Table~\ref{tab:pinn-accuracy}). Holding the market exact, an MLP and a physics-informed network both learn $(\mathrm{soc}, \mathrm{soh}, \text{power fraction}) \mapsto (\Delta\mathrm{soc}, \Delta\mathrm{soh}, \text{grid energy})$ from a shrinking budget of $N$ transitions, over ten fit seeds. The soft residual beats the MLP only at $N{=}500$ ($0.014\pm0.002$ vs.\ $0.018\pm0.003$), and its apparent edge at $N{=}200$ sits inside one standard deviation. Below that the MLP wins outright and by widening margins, the battery map being smooth enough that an unconstrained network interpolates it from a handful of points. Under a narrow training distribution the MLP wins at every budget.
+No, and least of all in the small-$N$ regime a PINN is meant to own (Section~\ref{sec:related-pinn}, Table~\ref{tab:pinn-accuracy}). Holding the market exact, an MLP and a physics-informed network learn $(\mathrm{soc}, \mathrm{soh}, \text{power fraction}) \mapsto (\Delta\mathrm{soc}, \Delta\mathrm{soh}, \text{grid energy})$ from a shrinking budget of $N$ transitions, over ten fit seeds. The soft residual beats the MLP only at $N{=}500$ ($0.014\pm0.002$ vs.\ $0.018\pm0.003$), and its apparent edge at $N{=}200$ sits inside one standard deviation; below that the MLP wins outright and by widening margins, the battery map being smooth enough that an unconstrained network interpolates it from a handful of points. Under a narrow training distribution the MLP wins at every budget.
 
 \begin{table}[htbp]
 \centering
-\caption{Held-out pooled relative MAE (error over target std, across the three targets), uniform coverage, mean $\pm$ std over ten fit seeds; \textbf{bold} is the best point estimate per budget. The \texttt{mlp}$\to$\texttt{pinn-hard} step isolates the output clamp, \texttt{pinn-hard}$\to$\texttt{pinn-soft} the physics residual.}
+\caption{Held-out pooled relative MAE (error over target std, across the three targets), uniform coverage, mean $\pm$ std over ten fit seeds; \textbf{bold} is the best point estimate per budget. The mlp$\to$pinn-hard step isolates the output clamp, pinn-hard$\to$pinn-soft the physics residual.}
 \label{tab:pinn-accuracy}
 \begin{tabular}{lrrr}
 \toprule
@@ -525,36 +417,25 @@ $N$ & mlp & pinn-hard & pinn-soft \\
 \end{tabular}
 \end{table}
 
-The unconstrained MLP does predict impossible transitions, up to $17.9\pm3.3\%$ of test points at $N{=}10$, but the output clamp that rules these out isn't free either: \texttt{pinn-hard} is the \texttt{mlp} arm with clamped outputs, and it's the less accurate of the two at every budget.
+The unconstrained MLP does predict impossible transitions, up to $17.9\pm3.3\%$ of test points at $N{=}10$.
+
+\subsubsection{Harder physics: was the map simply too easy?}
+\label{sec:results-pinn-nonlinear}
+
+The natural reading is that the prior has nothing to contribute because there's nothing difficult to learn: equations (1) and (2) are close to piecewise linear in their inputs, so an unconstrained network already knows everything the physics could have told it. If that diagnosis is right, curving the ground truth should hand the advantage back, and a prior that can't win on a harder version of its own problem isn't worth carrying.
+
+We made the simulated battery's degradation genuinely nonlinear with two terms, both default-off so no other result in this dissertation is affected, the defaults reproducing (1) and (2) exactly under a regression test. The cycle-stress factor gains an exponent, becoming $1 + s\,(|P|/P_{\max})^{p}$ with $p{=}2$, so high-power cycling costs convexly rather than linearly more per kWh, in the spirit of resistive losses that scale with the square of current. The total SoH loss is then scaled by an end-of-life knee, $1 + g\,w^{q}$ with $w = (1 - \mathrm{SoH})/(1 - \mathrm{SoH}_{\mathrm{eol}}) \in [0,1]$ the fraction of the health budget already spent, $g{=}4$ and $q{=}3$, so a cell at the end-of-life floor degrades five times faster than a fresh one under the same action. The values are illustrative rather than fitted to cell data, the objective is curvature. The sweep behind Table~\ref{tab:pinn-accuracy} was rerun unchanged against this ground truth (same budgets, coverage regimes, ten fit seeds and 8{,}000-point held-out test set), comparing the MLP with pinn-hard.
+
+The MLP still wins (Table~\ref{tab:pinn-nonlinear}). The physics-informed arm edges it at $N{=}500$ ($0.022\pm0.002$ vs.\ $0.024\pm0.002$), which it never managed against the linear ground truth, and the two sit inside each other's seed spread at $N = 200$, 50 and 25. But the MLP is clearly ahead at $N{=}100$, and its margin at the smallest budgets is as wide as before: $0.272\pm0.017$ vs.\ $0.425\pm0.021$ at $N{=}15$ and $0.386\pm0.013$ vs.\ $0.552\pm0.031$ at $N{=}10$. Under the narrow training distribution it again wins at all seven budgets, and none in the low-data regime that motivates a physics prior in the first place.
 
 \subsubsection{Wrong-constraints ablation}
 \label{sec:results-pinn-wrong}
 
-To be thorough about \emph{why} the prior doesn't pay, we asked whether a PINN given the wrong physics could still beat the MLP. If it could, the residual was never carrying physical information and its occasional win was generic regularization. We refit the same tuned soft-residual PINN three times with a broken law: efficiency frozen at 0.60 instead of the true 0.949, nameplate capacity halved in the energy identity, and the calendar-ageing law flipped so an empty battery ages fastest. A control freezes efficiency at its \emph{true} value, separating ``frozen'' from ``wrong''.
+To pin down \emph{why} the prior doesn't pay, we asked whether a PINN given the wrong physics could still beat the MLP. If it could, the residual was never carrying physical information and its occasional win was generic regularization. We refit the same tuned soft-residual PINN three times with a broken law: efficiency frozen at 0.60 instead of the true 0.949, nameplate capacity halved in the energy identity, and the calendar-ageing law flipped so an empty battery ages fastest. A control freezes efficiency at its \emph{true} value, separating ``frozen'' from ``wrong''.
 
-It can't (Table~\ref{tab:pinn-wrong}). At $N{=}500$ wrong efficiency ($0.070\pm0.004$) and wrong capacity ($0.071\pm0.002$) cost about $4.9\times$ the correct residual's error and land about $3.9\times$ worse than the MLP, while the control ($0.014\pm0.002$) matches the correct residual exactly. So where the residual helps at all, it helps because the physics is right. But the penalty for wrong physics shrinks steadily as data thins ($4.9\times$, $2.7\times$, $1.6\times$, $1.1\times$ at $N = 500, 200, 100, 50$) and disappears below $N{=}50$, where every wrong variant sits inside the seed spread of the correct one.
+It can't (Table~\ref{tab:pinn-wrong}). At $N{=}500$ wrong efficiency ($0.070\pm0.004$) and wrong capacity ($0.071\pm0.002$) cost about $4.9\times$ the correct residual's error and about $3.9\times$ the MLP's, while the control ($0.014\pm0.002$) matches the correct residual exactly: where the residual helps at all, it helps because the physics is right. But the penalty for wrong physics shrinks steadily as data thins ($4.9\times$, $2.7\times$, $1.6\times$, $1.1\times$ at $N = 500, 200, 100, 50$) and disappears below $N{=}50$, where every wrong variant sits inside the seed spread of the correct one.
 
-The residual is therefore inert exactly where a PINN is supposed to help. It only bites once there's enough data to identify its physical parameters, which is the regime where the plain MLP was already good enough. Taken with the accuracy results, the verdict on this problem is simply negative: the physics prior isn't practical here. It loses on accuracy at every budget an operator would realistically have, its residual carries no information at those budgets, and its one apparent guarantee is an output clamp restated, available to any network without physics. Section~\ref{sec:limitations} notes what would have to change for the conclusion to differ.
-
-\begin{table*}[t]
-\centering
-\caption{Wrong-constraints ablation. Held-out pooled relative MAE, uniform coverage, mean $\pm$ std over ten fit seeds, same training draws and test set as Table~\ref{tab:pinn-accuracy}; \textbf{bold} is the best point estimate per row. \texttt{soft-correct} is the tuned soft-residual PINN, \texttt{soft-eta-true} freezes efficiency at its true value as a control for freezing itself, and the remaining three freeze or flip a law to a wrong value.}
-\label{tab:pinn-wrong}
-\small
-\begin{tabular}{lrrrrrr}
-\toprule
-$N$ & mlp & soft-correct & soft-eta-true & soft-eta-wrong & soft-cap-wrong & soft-cal-wrong \\
-\midrule
-500 & $0.018\pm0.003$ & $0.014\pm0.002$ & $\mathbf{0.014\pm0.002}$ & $0.070\pm0.004$ & $0.071\pm0.002$ & $0.022\pm0.002$ \\
-200 & $0.034\pm0.003$ & $0.032\pm0.003$ & $\mathbf{0.031\pm0.003}$ & $0.086\pm0.005$ & $0.082\pm0.003$ & $0.036\pm0.003$ \\
-100 & $\mathbf{0.043\pm0.003}$ & $0.065\pm0.006$ & $0.065\pm0.007$ & $0.104\pm0.005$ & $0.100\pm0.009$ & $0.067\pm0.008$ \\
-50 & $\mathbf{0.076\pm0.006}$ & $0.170\pm0.020$ & $0.166\pm0.018$ & $0.188\pm0.018$ & $0.158\pm0.010$ & $0.171\pm0.019$ \\
-25 & $\mathbf{0.147\pm0.009}$ & $0.187\pm0.016$ & $0.194\pm0.018$ & $0.206\pm0.012$ & $0.217\pm0.021$ & $0.188\pm0.019$ \\
-15 & $\mathbf{0.358\pm0.014}$ & $0.521\pm0.011$ & $0.523\pm0.008$ & $0.538\pm0.011$ & $0.539\pm0.021$ & $0.522\pm0.012$ \\
-10 & $\mathbf{0.454\pm0.029}$ & $0.504\pm0.013$ & $0.505\pm0.016$ & $0.527\pm0.018$ & $0.494\pm0.009$ & $0.504\pm0.012$ \\
-\bottomrule
-\end{tabular}
-\end{table*}
+The residual is therefore inert exactly where a PINN is supposed to help, biting only once there's enough data to identify its physical parameters, which is the regime where the plain MLP was already good enough. The verdict on this problem is negative: the prior loses on accuracy at every budget an operator would realistically have, its residual carries no information at those budgets, its one apparent guarantee is an output clamp available to any network without physics, and making the underlying physics harder doesn't rescue it. Section~\ref{sec:future-work} notes what would have to change for the conclusion to differ.
 
 \section{Conclusion and Future Work}
 \label{sec:conclusion}
@@ -567,7 +448,7 @@ Beyond that, the dissertation maps where the same decomposition stops paying. Ov
 
 Adaptation is where it breaks, and not for the reason we expected (Section~\ref{sec:results-adaptation}). The difficulty isn't noticing that the market has moved. It's that refitting the model every night on a rolling window quietly degrades it, even while the market is still stationary. The model leaves its own calibration band on the third night, 27 days before the shift arrives. Keeping a model trustworthy while it goes on learning turns out to be a harder requirement than getting it right once. A stricter gate doesn't solve this because a gate can only reject a bad refit, and rejecting every refit is the same thing as freezing the model. What the loop needs is a refit that holds on to what the original year taught it while it absorbs new days, instead of drifting away from both (Section~\ref{sec:results-discussion-sub}).
 
-The battery-side study results in a similar direction where learning the battery instead of assuming it gives no sample-efficiency gain over a plain network, and the wrong-constraints ablation shows why. The physics residual only carries information when data is plentiful, and goes inert below $N{=}50$, exactly where it was meant to help (Section~\ref{sec:results-pinn-wrong}). Its zero rate of impossible predictions isn't a result but a restatement of its output clamp, which any network can use. The honest verdict is that the physics prior isn't practical on this problem. And model-free online learning is the weakest option throughout, taking years to converge from scratch and coming out worst after a shift. The through-line is that it's the world model's trustworthiness, not raw interaction, that carries this approach.
+The battery-side study results in a similar direction where learning the battery instead of assuming it gives no sample-efficiency gain over a plain network, and the wrong-constraints ablation shows why. The physics residual only carries information when data is plentiful, and goes inert below $N{=}50$, exactly where it was meant to help (Section~\ref{sec:results-pinn-wrong}). The honest verdict is that the physics prior isn't practical on this problem. And model-free online learning is the weakest option throughout, taking years to converge from scratch and coming out worst after a shift. The through-line is that it's the world model's trustworthiness, not raw interaction, that carries this approach.
 
 \subsection{Limitations}
 \label{sec:limitations}
@@ -581,7 +462,9 @@ One experiment would sharpen Section~\ref{sec:results-budget}, training a Dyna p
 
 The clearest substantive next step is to repair the nightly refit (Section~\ref{sec:results-discussion-sub}). The ensemble drifts even on stationary data, so the fix belongs in the refit itself rather than in the test wrapped around it. There are three candidates. Refit from scratch on the pooled history each night, instead of fine-tuning from the previous night's weights. Anchor more heavily on pre-deployment days. Or score each refit against the calibration statistics rather than likelihood alone. Whichever is chosen, the three-shift grid would then be re-run.
 
-On the battery side (Section~\ref{sec:results-pinn}), the question worth keeping is not about physics priors. It is whether constraining a surrogate's outputs to be physically possible protects a downstream policy from exploiting the model, and testing that needs no physics-informed variant at all. A stronger claim about physics priors would need a harder dynamics problem than a smooth three-dimensional step map. The successes reported on real cells \citep{wang2024pinnbattery} come from noisy, partially observed measurements, so the negative result here bounds that claim rather than contradicting it.
+A larger question is what survives once the asset is big enough to move the price it trades against (Section~\ref{sec:limitations}). Price-taking is what lets the market be learned as an exogenous process, and three things in this dissertation rest on it. Imagination runs over full 24-step days because the policy's actions can't steer the model into self-confirming error, so the short branched rollouts that model-based methods normally need \citep{janner2019mbpo} would come back. The hindsight optimum is computable as a single full-episode plan only because dispatch doesn't change the prices it is planned against, so a bidding asset needs a co-optimised benchmark instead, and every capture percentage in this paper is measured against that oracle. And the gate's criteria are statistics of a price distribution that is assumed fixed, whereas under endogeneity the distribution to be matched depends on the policy being trained inside it, which makes the target move as training proceeds. The interesting regime is the one between the two extremes, where the asset is large enough that its own dispatch shifts the marginal unit on scarce evenings but not on ordinary ones, so exogeneity fails only in the hours where most of the arbitrage value sits, and where storage begins to affect consumer prices as well as its own revenue \citep{sioshansi2009storage}.
+
+On the battery side (Section~\ref{sec:results-pinn}), the verdict is negative for this problem rather than for physics priors in general, and one experiment would tell the two apart. Making the physics harder is not that experiment, since the rerun with a curved degradation law left the ordering intact (Section~\ref{sec:results-pinn-nonlinear}). The setting where a prior is reported to pay is not a harder version of this problem but a different one, in which the state cannot be measured directly and every label is expensive, and that is where the successes on real cells come from. The test is therefore to learn the cell from current and voltage alone, with health hidden so that $\mathrm{SoH}$ has to be inferred from the same signals the residual constrains, and with each label costing a characterisation cycle on hardware rather than a call to a simulator. If the prior pays there, the result here applies only to problems whose state is already visible and whose data is cheap; if it fails there too, the sample-efficiency case for physics priors is weak in general.
 
 \begin{thebibliography}{}
 
@@ -662,10 +545,170 @@ Xu, B. et al. (2018) `Modeling of lithium-ion battery degradation for cell life 
 
 \end{thebibliography}
 
-\onecolumn
-
 \appendices
 
+\onecolumn
+
+\clearpage
+\section{Supporting Results: Simulator, Gate, Feasibility, and Adaptation}
+\label{app:supporting-market}
+
+This appendix collects the supporting evidence for Sections~\ref{sec:calibration}, \ref{sec:results-gate}, \ref{sec:results-safe} and \ref{sec:results-adaptation}. Table~\ref{tab:calibration} is the simulator's calibration contract and Table~\ref{tab:gate-seeds} the per-draw gate outcome behind the seed sweep. Table~\ref{tab:safe-exploration} gives the full infeasible-request measurement for both training-time behaviours and deployed policies. Tables~\ref{tab:adaptation-results} and \ref{tab:adaptation-settled} give the adaptation results across all three shifts and the calm/post-shift split of the adaptive arm's deficit, and Figure~\ref{fig:adapt-fuel} the capture and detection traces for the representative shift.
+
+\begin{table}[htbp]
+\centering
+\caption{The calibration contract over a seeded simulated year.}
+\label{tab:calibration}
+\begin{tabular}{ll}
+\toprule
+Statistic & Contract \\
+\midrule
+Median price & $\approx\$64$/MWh \\
+Winter $-$ summer median & $> \$6$/MWh \\
+Winter $-$ summer mean & $> \$15$/MWh \\
+Evening peak vs overnight & evening higher \\
+Scarcity hours (clearing at cap) & $< 1.5\%$ of hours \\
+Negative-price hours & rare but present \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Winter mean price gap (\$/MWh) across five independent $D{=}365$ draws, the criterion that decides the gate.}
+\label{tab:gate-seeds}
+\small
+\begin{tabular}{lrrl}
+\toprule
+Draw & Real & Synthetic & Gate \\
+\midrule
+seed 0 & 27.5 & 17.1 & \textbf{PASS} \\
+seed 1 & 13.7 & $-130.1$ & FAIL (4 criteria) \\
+seed 2 & 22.2 & 10.9 & FAIL \\
+seed 3 & 25.1 & 9.5 & FAIL \\
+seed 4 & 28.0 & 10.5 & FAIL \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Infeasible on-asset action requests, an SoC bound throttling more than 1\% of the requested energy. 20 paired 14-day episodes, mean $\pm$ std over episodes; the middle column extrapolates to a 365-day on-asset budget at the mean rate. Top block: behaviours that would source training transitions. Bottom block: trained policies at evaluation, with their share of steps parked within 0.1 of an SoC bound.}
+\label{tab:safe-exploration}
+\begin{tabular}{lrrr}
+\toprule
+On-asset behaviour & Infeasible-request rate & Per 365-day budget & Near-bound share \\
+\midrule
+Random (model-free warmup exploration) & $35.8\pm3.3\%$ & $\approx$3{,}100 & n/a \\
+Heuristic (fixed rule) & $29.4\pm0.1\%$ & $\approx$2{,}600 & n/a \\
+Rolling-horizon planner (Dyna data source) & $0.0\pm0.0\%$ & 0 & n/a \\
+Idle & $0.0\pm0.0\%$ & 0 & n/a \\
+\midrule
+Trained dyna-365 (deployed, deterministic) & $92.8\pm6.7\%$ & $\approx$8{,}129 & $95.6\pm4.4\%$ \\
+Trained replay-365 (deployed, deterministic) & $95.2\pm5.8\%$ & $\approx$8{,}343 & $96.2\pm4.3\%$ \\
+Trained unlimited-data (deployed, deterministic) & $95.1\pm4.9\%$ & $\approx$8{,}334 & $96.5\pm3.4\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Adaptation results, all three shifts, 10 paired deployments each. Capture is pooled 7-day net profit over the same-window oracle, $\pm$ leave-one-deployment-out jackknife std; regret is mean $\pm$ std over deployments; recovery lag is days after $T$ to regain 90\% of an arm's \emph{own} pre-shift capture (never = not within the 90-day horizon).}
+\label{tab:adaptation-results}
+\begin{tabular}{llrrrr}
+\toprule
+Shift & Arm & Pre capture (\%) & Post capture (\%) & Recovery lag & Regret (\$) \\
+\midrule
+fuel-step & adaptive-dyna & $66.5\pm10.3$ & $37.1\pm7.2$ & 19d & $231\pm85$ \\
+fuel-step & frozen-dyna & $88.5\pm8.0$ & $53.4\pm8.1$ & 20d & $172\pm47$ \\
+fuel-step & frozen-ideal & $91.8\pm5.0$ & $41.6\pm8.7$ & never & $214\pm74$ \\
+fuel-step & online-ft & $85.0\pm5.8$ & $12.3\pm8.3$ & never & $328\pm193$ \\
+fuel-step & heuristic & $54.7\pm25.3$ & $27.1\pm9.5$ & 14d & $282\pm111$ \\
+\midrule
+capacity-loss & adaptive-dyna & $63.4\pm14.3$ & $77.7\pm4.6$ & 1d & $218\pm119$ \\
+capacity-loss & frozen-dyna & $90.2\pm7.2$ & $88.7\pm3.5$ & 7d & $110\pm54$ \\
+capacity-loss & frozen-ideal & $90.5\pm5.1$ & $91.1\pm2.1$ & 1d & $90\pm55$ \\
+capacity-loss & online-ft & $78.2\pm6.7$ & $66.0\pm6.6$ & 9d & $348\pm301$ \\
+capacity-loss & heuristic & $54.5\pm25.1$ & $55.2\pm6.2$ & 3d & $467\pm309$ \\
+\midrule
+cold-regime & adaptive-dyna & $71.2\pm17.4$ & $74.0\pm3.1$ & 8d & $857\pm858$ \\
+cold-regime & frozen-dyna & $90.3\pm7.2$ & $82.9\pm4.2$ & 1d & $546\pm695$ \\
+cold-regime & frozen-ideal & $90.6\pm5.1$ & $87.6\pm2.0$ & 1d & $394\pm443$ \\
+cold-regime & online-ft & $80.4\pm7.7$ & $83.8\pm1.6$ & 1d & $538\pm412$ \\
+cold-regime & heuristic & $54.5\pm25.1$ & $69.8\pm1.7$ & 1d & $982\pm851$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Settled capture, adaptive-dyna versus frozen-dyna: calm windows fully inside days 20--29 (after the startup transient), post-shift windows fully inside days 37--119. Pooled capture $\pm$ jackknife std, \%.}
+\label{tab:adaptation-settled}
+\scriptsize
+\begin{tabular}{lrrrr}
+\toprule
+Shift & Adapt.\ (calm) & Frozen (calm) & Adapt.\ (post) & Frozen (post) \\
+\midrule
+fuel-step & $83.7\pm9.0$ & $94.0\pm5.1$ & $40.7\pm7.9$ & $55.6\pm8.8$ \\
+capacity-loss & $80.3\pm11.0$ & $93.4\pm3.8$ & $78.5\pm3.4$ & $89.7\pm2.4$ \\
+cold-regime & $81.8\pm9.9$ & $93.8\pm3.7$ & $75.1\pm3.1$ & $82.3\pm4.5$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{adaptation_fuel-step.png}
+\caption{Capture curves and NLL detection trace, fuel-step shift, mean over 10 paired seeds ($\pm$SEM). Shown as the representative case; the other two shifts are reported in Table~\ref{tab:adaptation-results}.}
+\label{fig:adapt-fuel}
+\end{figure}
+
+\clearpage
+\section{Supporting Results: Battery Surrogate}
+\label{app:supporting-pinn}
+
+This appendix collects the two supporting sweeps for Section~\ref{sec:results-pinn}: the rerun against a nonlinear ground truth (Table~\ref{tab:pinn-nonlinear}) and the wrong-constraints ablation (Table~\ref{tab:pinn-wrong}).
+
+\begin{table}[htbp]
+\centering
+\caption{Held-out pooled relative MAE under the nonlinear ground truth (quadratic cycle stress, end-of-life knee), uniform coverage, mean $\pm$ std over ten fit seeds; \textbf{bold} is the best point estimate per budget. The normaliser is this ground truth's own target spread, so levels are not comparable with Table~\ref{tab:pinn-accuracy}.}
+\label{tab:pinn-nonlinear}
+\begin{tabular}{lrr}
+\toprule
+$N$ & mlp & pinn-hard \\
+\midrule
+500 & $0.024\pm0.002$ & $\mathbf{0.022\pm0.002}$ \\
+200 & $\mathbf{0.047\pm0.005}$ & $0.048\pm0.003$ \\
+100 & $\mathbf{0.060\pm0.002}$ & $0.066\pm0.005$ \\
+50 & $\mathbf{0.131\pm0.011}$ & $0.136\pm0.009$ \\
+25 & $0.178\pm0.009$ & $\mathbf{0.170\pm0.011}$ \\
+15 & $\mathbf{0.272\pm0.017}$ & $0.425\pm0.021$ \\
+10 & $\mathbf{0.386\pm0.013}$ & $0.552\pm0.031$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Wrong-constraints ablation. Held-out pooled relative MAE, uniform coverage, mean $\pm$ std over ten fit seeds, same training draws and test set as Table~\ref{tab:pinn-accuracy}; \textbf{bold} is the best point estimate per row. soft-correct is the tuned soft-residual PINN, soft-eta-true freezes efficiency at its true value as a control for freezing itself, and the remaining three freeze or flip a law to a wrong value.}
+\label{tab:pinn-wrong}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+$N$ & mlp & soft-correct & soft-eta-true & soft-eta-wrong & soft-cap-wrong & soft-cal-wrong \\
+\midrule
+500 & $0.018\pm0.003$ & $0.014\pm0.002$ & $\mathbf{0.014\pm0.002}$ & $0.070\pm0.004$ & $0.071\pm0.002$ & $0.022\pm0.002$ \\
+200 & $0.034\pm0.003$ & $0.032\pm0.003$ & $\mathbf{0.031\pm0.003}$ & $0.086\pm0.005$ & $0.082\pm0.003$ & $0.036\pm0.003$ \\
+100 & $\mathbf{0.043\pm0.003}$ & $0.065\pm0.006$ & $0.065\pm0.007$ & $0.104\pm0.005$ & $0.100\pm0.009$ & $0.067\pm0.008$ \\
+50 & $\mathbf{0.076\pm0.006}$ & $0.170\pm0.020$ & $0.166\pm0.018$ & $0.188\pm0.018$ & $0.158\pm0.010$ & $0.171\pm0.019$ \\
+25 & $\mathbf{0.147\pm0.009}$ & $0.187\pm0.016$ & $0.194\pm0.018$ & $0.206\pm0.012$ & $0.217\pm0.021$ & $0.188\pm0.019$ \\
+15 & $\mathbf{0.358\pm0.014}$ & $0.521\pm0.011$ & $0.523\pm0.008$ & $0.538\pm0.011$ & $0.539\pm0.021$ & $0.522\pm0.012$ \\
+10 & $\mathbf{0.454\pm0.029}$ & $0.504\pm0.013$ & $0.505\pm0.016$ & $0.527\pm0.018$ & $0.494\pm0.009$ & $0.504\pm0.012$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
 \section{Generative AI Tools: Student Accountability Statement}
 \label{app:genai}
 
@@ -698,7 +741,7 @@ Project Section & Description & Justification \\
 \midrule
 Software development: simulator and environment &
 AI-assisted code generation, refactoring and debugging of the market simulator, battery model, Gymnasium environment and optimisation oracles. &
-Design decisions and problem formulation were mine. All behaviour is pinned by a test suite of 84 tests, including the statistical calibration contract of Table~\ref{tab:calibration}, which I specified and verified. \\
+Design decisions and problem formulation were mine. \\
 \bottomrule
 \end{tabularx}
 \end{center}
