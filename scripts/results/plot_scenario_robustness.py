@@ -73,7 +73,7 @@ def main() -> None:
         text.set_color(SECONDARY)
 
     fig.suptitle(
-        "RQ3: does the gated world model degrade gracefully under transient shocks it never trained on?",
+        "Experiment 3 (RQ3): does the gated world model degrade gracefully under transient shocks it never trained on?",
         fontsize=11, color=INK, x=0.02, ha="left", y=0.99,
     )
     fig.text(

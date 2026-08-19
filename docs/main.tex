@@ -232,12 +232,17 @@ All arms are evaluated the same way, over 20 paired 14-day episodes on the real 
 
 Those 20 episodes vary the market week, not the training run, so the $D=365$ experiment is run twice, each time over five seeds. The \textbf{fixed-history sweep} pins the 365 stored days and the gated ensemble fitted to them, so only the training run changes and each seed gives a paired dyna-minus-replay difference on the same held-out episodes. The \textbf{pipeline sweep} varies the draw instead, each seed collecting its own 365 days and fitting its own ensemble, re-gated before anything trains, which measures how often a year of observed prices yields a model worth training inside at all; a seed whose ensemble fails the gate gets no dyna arm, since that is the deployed protocol rather than a discarded run.
 
-\subsection{Experiment 2: Zero-Shot Robustness to Transient Shocks}
+\subsection{Experiment 2: On-Asset Feasibility}
+\label{sec:setup-safe}
+
+Only the rolling-horizon planner generates real transitions during Dyna training; SAC's own exploration acts only inside the imagined market. This experiment measures the infeasible-request rate, the share of steps an SoC bound throttles by more than 1\% of the requested energy, for four candidate on-asset behaviours (random, heuristic, the rolling-horizon planner, idle) and for the three deployed $D{=}365$ checkpoints from Experiment 1, all over the same 20 paired 14-day episodes. For the deployed policies we also record the near-bound share, whether SoC already sits within 0.1 of an operating bound before the action, to separate bound-parking from genuine mid-range violations.
+
+\subsection{Experiment 3: Zero-Shot Robustness to Transient Shocks}
 \label{sec:setup-robustness}
 
 The budget-trained policies are frozen and then tested under the five scenario types from Section~\ref{sec:regime-scenarios}, applied as short shock windows inside the evaluation episodes. These are regimes the policies never saw during training. Because the scenarios consume no randomness, each shocked episode can be paired with a calm episode from the same seed, which isolates the effect of the shock exactly. The question is not whether performance drops (it drops for everything) but how gracefully each policy degrades compared with the oracle on the same shocked days.
 
-\subsection{Experiment 3: Adaptation to Persistent Regime Shifts}
+\subsection{Experiment 4: Adaptation to Persistent Regime Shifts}
 \label{sec:setup-adaptation}
 
 Each deployment is one continuous 120-day market run. The first 30 days are calm and establish each arm's baseline then a persistent shift begins at day $T=30$ and lasts until the end. There are three shifts, permanent versions of FuelShock, PlantOutage and ColdSnap (Section~\ref{sec:regime-scenarios}), chosen to span a simple level change versus a structural change.
@@ -266,6 +271,11 @@ All metrics are normalised by the oracle on the same seed. Because the oracle re
 \item \textbf{cumulative regret}, the total post-shift shortfall against the oracle, in dollars;
 \item \textbf{detection trace}, the adaptive arm's per-day NLL, before and after each nightly fine-tune, showing whether and when the model noticed the shift.
 \end{itemize}
+
+\subsection{Experiment 5: Does a Physics Prior Need Fewer Real Transitions?}
+\label{sec:setup-pinn}
+
+This experiment holds the market exact and asks whether the battery half of the decomposition would benefit from a physics prior when data is scarce (Section~\ref{sec:related-pinn}). A plain MLP and a soft-residual PINN, penalised for violating the governing equations (Section~\ref{sec:battery}) at unlabelled points, both learn $(\mathrm{soc}, \mathrm{soh}, \text{power fraction}) \mapsto (\Delta\mathrm{soc}, \Delta\mathrm{soh}, \text{grid energy})$ from a shrinking budget of $N \in \{500, 200, 100, 50, 25, 15, 10\}$ transitions, ten fit seeds each, scored on held-out prediction error. Two extensions test \emph{why} any result holds: a rerun against a deliberately nonlinear degradation law (Section~\ref{sec:results-pinn-nonlinear}), and a wrong-constraints ablation that refits the same PINN against broken physics (Section~\ref{sec:results-pinn-wrong}).
 
 \subsection{Hyperparameters, Seeds, and Reporting}
 \label{sec:reporting}
@@ -315,7 +325,7 @@ More gradient steps cannot be the reason, since replay takes as many as it wants
 \subsection{On-Asset Feasibility: Training-Time Exploration versus Deployment}
 \label{sec:results-safe}
 
-Only the rolling-horizon planner generates real transitions during Dyna training, and it solves a dynamic program over an SoC grid confined to $[\mathrm{soc\_min}, \mathrm{soc\_max}]$, so an infeasible move is never in its search space to begin with. SAC's own exploration still tries infeasible actions constantly, but only inside the imagined market against the exact battery physics, never against the real asset. Training therefore does not avoid violations; it just keeps them off the physical battery. Table~\ref{tab:safe-exploration} (top block) confirms this over 20 paired 14-day episodes. A model-free agent exploring on the asset requests something infeasible on $35.8\pm3.3\%$ of its steps, mostly during warmup; even the heuristic hits $29.4\pm0.1\%$ while the planner hits zero.
+Only the rolling-horizon planner generates real transitions during Dyna training, and it solves a dynamic program over an SoC grid confined to $[\mathrm{soc\_min}, \mathrm{soc\_max}]$, so an infeasible move is never in its search space to begin with. SAC's own exploration still tries infeasible actions constantly, but only inside the imagined market against the exact battery physics, never against the real asset. Training therefore does not avoid violations; it just keeps them off the physical battery. Table~\ref{tab:safe-exploration} (top block) confirms this (Experiment 2, Section~\ref{sec:setup-safe}). A model-free agent exploring on the asset requests something infeasible on $35.8\pm3.3\%$ of its steps, mostly during warmup; even the heuristic hits $29.4\pm0.1\%$ while the planner hits zero.
 
 That guarantee does not survive deployment. Table~\ref{tab:safe-exploration}'s bottom block shows all three trained checkpoints requesting an SoC-throttled action on over 90\% of steps, and dyna-365 ($92.8\pm6.7\%$) is statistically indistinguishable from replay-365 ($95.2\pm5.8\%$) and the fully model-free unlimited-data policy ($95.1\pm4.9\%$).
 
@@ -360,7 +370,7 @@ That timing also rules out the obvious repair. Re-gating the nightly refit, free
 \subsection{Does a Physics Prior Need Fewer Transitions?}
 \label{sec:results-pinn}
 
-No, and least of all in the small-$N$ regime a PINN is meant to own (Section~\ref{sec:related-pinn}, Table~\ref{tab:pinn-accuracy}). Holding the market exact, an MLP and a physics-informed network learn $(\mathrm{soc}, \mathrm{soh}, \text{power fraction}) \mapsto (\Delta\mathrm{soc}, \Delta\mathrm{soh}, \text{grid energy})$ from a shrinking budget of $N$ transitions, over ten fit seeds. The soft residual beats the MLP only at $N{=}500$ ($0.014\pm0.002$ vs.\ $0.018\pm0.003$), and its apparent edge at $N{=}200$ sits inside one standard deviation; below that the MLP wins outright and by widening margins, reaching $0.358\pm0.014$ against $0.521\pm0.011$ at $N{=}15$, the battery map being smooth enough that an unconstrained network interpolates it from a handful of points. Under a narrow training distribution the MLP wins at every budget.
+No, and least of all in the small-$N$ regime a PINN is meant to own (Experiment 5, Section~\ref{sec:setup-pinn}; Table~\ref{tab:pinn-accuracy}). The soft residual beats the MLP only at $N{=}500$ ($0.014\pm0.002$ vs.\ $0.018\pm0.003$), and its apparent edge at $N{=}200$ sits inside one standard deviation; below that the MLP wins outright and by widening margins, reaching $0.358\pm0.014$ against $0.521\pm0.011$ at $N{=}15$, the battery map being smooth enough that an unconstrained network interpolates it from a handful of points. Under a narrow training distribution the MLP wins at every budget.
 
 The unconstrained MLP does predict impossible transitions, up to $17.9\pm3.3\%$ of test points at $N{=}10$.
 
@@ -387,13 +397,11 @@ The residual is therefore inert exactly where a PINN is supposed to help, biting
 
 \subsection{Summary of Findings}
 
-The results show that watching the market for a single year can be enough, on the one budget of the three tried whose fitted model passed the gate. A generative model fitted to that year, checked against a held-out year and used as the agent's training environment, yields a policy as good as one trained on unlimited market experience ($70.7\pm2.6\%$ of the hindsight optimum against $72.6\pm13.1\%$; Section~\ref{sec:results-budget}). The comparison that matters is the replay control. It sees exactly the same year and takes as many gradient updates as it wants, and still lands 32 points behind. The gain therefore does not come from training harder on the same data. It comes from having a model good enough to invent new days to train on, and ``good enough'' is not a judgement call here, since the gate decides it against fixed criteria before any training compute is spent.
+Watching the market for a single year can be enough, on the one budget of the three tried whose fitted model passes the gate: a Dyna policy trained inside that gated model matches the unlimited-data ceiling on two orders of magnitude less real data, while a replay control given the identical year and unlimited gradient updates falls well short (Section~\ref{sec:results-budget}). The gain is therefore not more training on the same data, but having a model good enough to invent new days worth training on, and ``good enough'' is not a judgement call, since the gate decides it against fixed criteria before any training compute is spent.
 
-Beyond that, the dissertation maps where the same decomposition stops paying. Over hours there is nothing to fix, since the 24-hour price window already carries almost all the value and the rolling-horizon oracle reaches 99.9\% of hindsight. Over days, a policy trained only on calm data holds up when a shock it has never seen arrives, keeping 58 to 90\% of what the oracle makes on the same shocked days. That is a floor rather than a solution, but it comes without any shock training.
+Three further investigations map where that decomposition holds and where it breaks. It holds over hours, since the 24-hour price window already carries almost all the value the rolling-horizon oracle can extract, and over days, since a policy trained only on calm data degrades gracefully under shocks it has never seen (Section~\ref{sec:results-robustness}). It breaks over weeks: the adaptation loop's nightly refit quietly drifts the market model out of its own calibration band while the market is still stationary, days before any shift arrives, so a stricter gate cannot fix it without simply freezing the model (Section~\ref{sec:results-adaptation}). And it does not extend to the battery half of the decomposition, since learning the battery with a physics prior instead of assuming it buys no sample efficiency, the residual only carrying information once data is plentiful enough that a plain network already matches it (Section~\ref{sec:results-pinn}).
 
-Adaptation is where it breaks, and not for the reason we expected (Section~\ref{sec:results-adaptation}). The difficulty is not noticing that the market has moved. It is that refitting the model every night on a rolling window quietly degrades it, even while the market is still stationary. The model leaves its own calibration band on the third night, 27 days before the shift arrives. Keeping a model trustworthy while it goes on learning turns out to be a harder requirement than getting it right once. A stricter gate does not solve this because a gate can only reject a bad refit, and rejecting every refit is the same thing as freezing the model.
-
-The battery-side study points in the same direction. Learning the battery instead of assuming it gives no sample-efficiency gain over a plain network, and the wrong-constraints ablation shows why. The physics residual only carries information when data is plentiful, and goes inert below $N{=}50$, exactly where it was meant to help (Section~\ref{sec:results-pinn-wrong}). The honest verdict is that the physics prior is not practical on this problem. Model-free online learning is the weakest option throughout, taking years to converge from scratch and coming out worst after a shift. The through-line is that it is the world model's trustworthiness, not raw interaction, that carries this approach.
+The through-line is that it is the world model's trustworthiness, not raw interaction volume, that this approach depends on. Model-free online learning is the weakest option throughout, taking years to converge from scratch and coming out worst after a shift, precisely because it has nothing else to depend on.
 
 \subsection{Limitations}
 \label{sec:limitations}
