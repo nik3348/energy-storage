@@ -2,8 +2,8 @@
 """Train a SAC agent on the battery arbitrage environment.
 
 Usage:
-    uv run --extra train python scripts/train_sac.py
-    uv run --extra train python scripts/train_sac.py --timesteps 500000 --n-envs 8
+    uv run --extra train python scripts/pipeline/train_reference_policy.py
+    uv run --extra train python scripts/pipeline/train_reference_policy.py --timesteps 500000 --n-envs 8
 
 Trains, saves the best and final models to --models-dir, then evaluates the
 agent against idle and rule-based-heuristic baselines on held-out seeds.

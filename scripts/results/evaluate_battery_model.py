@@ -14,10 +14,10 @@ wrong-sign grid energy). Two coverage regimes:
            model in states the log never covered)
 
 The gate for Stage 2: does a physics prior buy a *predictive* sample-efficiency
-crossover? (Spoiler in the design doc's risk 2: the dynamics may be too simple.)
+crossover?
 
 Usage:
-    uv run --extra train python scripts/evaluate_battery_model.py
+    uv run --extra train python scripts/results/evaluate_battery_model.py
 """
 
 import argparse
@@ -27,6 +27,15 @@ import numpy as np
 
 from energy_storage.battery import Battery, BatteryConfig
 from energy_storage import battery_model as bm
+
+
+def nonlinear_battery_config() -> BatteryConfig:
+    """A harder ground truth: convex (I^2R-like) C-rate stress and an
+    end-of-life "knee" where degradation accelerates as SoH nears eol_soh --
+    curvature the default (linear) BatteryConfig doesn't have. Illustrative,
+    not fit to real cell data; both knobs default off, so every other result
+    in this repository is unaffected (tests/test_battery.py pins this)."""
+    return BatteryConfig(cycle_stress_exponent=2.0, knee_gain=4.0, knee_exponent=3.0)
 
 
 def sample_narrow(n: int, cfg: BatteryConfig, seed: int) -> tuple[np.ndarray, np.ndarray]:
@@ -70,10 +79,22 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=400)
     parser.add_argument("--hidden", type=int, default=64)
     parser.add_argument("--test-size", type=int, default=8000)
-    parser.add_argument("--out", type=Path, default=Path("data/battery-model-stage1.npz"))
+    parser.add_argument(
+        "--nonlinear",
+        action="store_true",
+        help="use the convex-stress + EoL-knee ground truth (nonlinear_battery_config) "
+        "instead of the default linear BatteryConfig",
+    )
+    parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
+    if args.out is None:
+        args.out = Path(
+            "data/battery-model-stage1-nonlinear.npz"
+            if args.nonlinear
+            else "data/battery-model-stage1.npz"
+        )
 
-    cfg = BatteryConfig()
+    cfg = nonlinear_battery_config() if args.nonlinear else BatteryConfig()
     xt, yt = bm.sample_transitions(args.test_size, cfg, seed=99)  # full-envelope test
     pf_t = xt[:, 2]
     scale = np.maximum(yt.std(0), 1e-8)

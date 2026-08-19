@@ -17,8 +17,8 @@ Windows quoted: pre-shift (windows fully inside days 0..T-1), post-shift
 settled post (windows inside days 37..119).
 
 Usage:
-    uv run python scripts/adaptation_stats.py                 # all shifts
-    uv run python scripts/adaptation_stats.py --shift fuel-step
+    uv run python scripts/results/adaptation_stats.py                 # all shifts
+    uv run python scripts/results/adaptation_stats.py --shift fuel-step
 """
 
 import argparse

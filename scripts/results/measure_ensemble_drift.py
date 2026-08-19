@@ -5,7 +5,7 @@ the same held-out real year used to certify the original D=365 model
 (Section "The Validation Gate and the Data Threshold").
 
 Prices are exogenous, so this reuses the exact fuel-step deployment stream at
---seed (matching run_adaptation.py's default seed0, i.e. the first paired
+--seed (matching pipeline/run_adaptation_deployments.py's default seed0, i.e. the first paired
 deployment) with a cheap idle policy standing in for whatever the real arm
 would do: the nightly refit depends only on observed prices, not on the
 policy's actions. This skips the SAC fine-tune and the planner-demo refresh
@@ -13,7 +13,7 @@ policy's actions. This skips the SAC fine-tune and the planner-demo refresh
 Appendix drift table far more cheaply than an actual adaptive-dyna deployment.
 
 Usage:
-    uv run --extra train python scripts/measure_ensemble_drift.py
+    uv run --extra train python scripts/results/measure_ensemble_drift.py
 """
 
 import argparse

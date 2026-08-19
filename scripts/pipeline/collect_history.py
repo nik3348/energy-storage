@@ -5,7 +5,7 @@ Every experiment arm sees exactly this history and nothing else, so collect
 once per (seed, budget) and point the arms at the file.
 
 Usage:
-    uv run python scripts/collect_history.py --days 365 --seed 0
+    uv run python scripts/pipeline/collect_history.py --days 365 --seed 0
 """
 
 import argparse

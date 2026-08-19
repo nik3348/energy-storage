@@ -7,7 +7,7 @@ value in imagination, so the Dyna result is only interpretable if the
 synthetic years pass (roughly) the same gates as tests/test_market.py.
 
 Usage:
-    uv run --extra train python scripts/validate_market_model.py --budget-days 365
+    uv run --extra train python scripts/results/validate_market_model.py --budget-days 365
 """
 
 import argparse
@@ -99,7 +99,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--budget-days", type=int, default=365)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--history", type=Path, default=None, help="npz from collect_history.py; default: simulate fresh")
+    parser.add_argument("--history", type=Path, default=None, help="npz from pipeline/collect_history.py; default: simulate fresh")
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--hidden", type=int, default=128)
     parser.add_argument("--epochs", type=int, default=2000)
@@ -144,7 +144,7 @@ def main() -> None:
     passed = all(verdicts.values())
     print("\nGATE:", "PASS — model is fit to train on" if passed else "FAIL — do not train on this model")
 
-    # The saved file is the gate certificate: train_dyna.py refuses to run
+    # The saved file is the gate certificate: pipeline/train_dyna_arms.py refuses to run
     # the dyna arm without it, so only a passing model gets written.
     if passed:
         save_model = args.save_model or Path("models") / f"market-model-d{args.budget_days}-s{args.seed}.pt"

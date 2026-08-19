@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Wrong-constraints ablation for the PINN battery surrogate (RQ5 follow-up).
 
-The main comparison (scripts/evaluate_battery_model.py) found the tuned
+The main comparison (evaluate_battery_model.py) found the tuned
 soft-residual PINN beats the MLP only at the largest budgets. This ablation
 asks *why*: is that win physics content, or would any constraint-shaped
 regularizer do? We refit the same tuned soft-residual PINN with deliberately
@@ -25,7 +25,7 @@ irrelevant. Uniform coverage only (the regime where the soft PINN wins at
 all).
 
 Usage:
-    uv run --extra train python scripts/evaluate_wrong_constraints.py
+    uv run --extra train python scripts/results/evaluate_wrong_constraints.py
 """
 
 import argparse

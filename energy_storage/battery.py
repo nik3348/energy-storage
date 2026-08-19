@@ -38,10 +38,20 @@ class BatteryConfig:
     # per-kWh loss is scaled by (1 + cycle_stress * |power| / max_power).
     cycle_life: float = 5000.0
     cycle_stress: float = 1.0
+    # Power-fraction exponent on the cycle-stress term (default 1 = today's
+    # linear stress). >1 makes high-power (dis)charging convexly costlier per
+    # kWh, matching I^2R-type resistive losses that scale with current^2.
+    cycle_stress_exponent: float = 1.0
     # Calendar aging: sitting idle at SoC 0.5 takes SoH 1.0 -> eol_soh in
     # calendar_life_years. Aging is faster at high SoC (see step()).
     calendar_life_years: float = 15.0
     eol_soh: float = 0.8
+    # End-of-life "knee": total soh_loss (cycle + calendar) is scaled by
+    # 1 + knee_gain * wear_frac**knee_exponent, where wear_frac in [0, 1] is
+    # how much of the SoH budget (1.0 -> eol_soh) is already spent. Default
+    # knee_gain=0 disables this (today's constant-rate aging).
+    knee_gain: float = 0.0
+    knee_exponent: float = 3.0
 
 
 class Battery:
@@ -115,7 +125,7 @@ class Battery:
         cycle_loss = (
             throughput_kwh
             * self._soh_loss_per_kwh
-            * (1.0 + cfg.cycle_stress * power_fraction)
+            * (1.0 + cfg.cycle_stress * power_fraction**cfg.cycle_stress_exponent)
         )
 
         # Calendar aging: always ticks, faster at high SoC. The (0.5 + soc)
@@ -123,6 +133,14 @@ class Battery:
         # as an empty one, and calibrates to calendar_life_years at SoC 0.5.
         soc_avg = 0.5 * (soc_before + self.soc)
         calendar_loss = self._calendar_loss_per_hour * (0.5 + soc_avg) * dt_h
+
+        # End-of-life knee: scale total loss up as the SoH budget runs out.
+        # Applied to both terms individually so cycle_loss + calendar_loss ==
+        # soh_loss still holds.
+        wear_frac = min(1.0, max(0.0, (1.0 - self.soh) / (1.0 - cfg.eol_soh)))
+        knee_factor = 1.0 + cfg.knee_gain * wear_frac**cfg.knee_exponent
+        cycle_loss *= knee_factor
+        calendar_loss *= knee_factor
 
         soh_loss = cycle_loss + calendar_loss
         old_capacity = capacity

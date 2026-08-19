@@ -7,7 +7,7 @@ under the calm control and the five shock regimes (energy_storage/robustness.py)
 None of these policies saw any shock during training, so this is a zero-shot test.
 
 Usage:
-    uv run --extra train python scripts/measure_scenario_robustness.py
+    uv run --extra train python scripts/results/measure_scenario_robustness.py
 """
 
 import argparse

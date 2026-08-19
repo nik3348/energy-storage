@@ -124,3 +124,49 @@ def test_energy_conserved_through_degradation():
     info = b.step(10.0, dt_h=1.0)
     expected = stored_before + info.throughput_kwh
     assert b.energy_stored_kwh == pytest.approx(expected)
+
+
+def test_nonlinear_knobs_default_to_current_linear_behavior():
+    # cycle_stress_exponent=1, knee_gain=0 must reproduce the plain formula.
+    b = make_battery()
+    info = b.step(50.0, dt_h=1.0)  # 50 kW == max_charge_kw -> power_fraction 1.0
+    expected_cycle = info.throughput_kwh * b._soh_loss_per_kwh * (1.0 + b.config.cycle_stress)
+    assert info.cycle_loss == pytest.approx(expected_cycle)
+    assert info.soh_loss == pytest.approx(info.cycle_loss + info.calendar_loss)
+
+
+def test_cycle_stress_exponent_is_convex_in_power():
+    def rate(exponent: float, power_frac: float) -> float:
+        b = make_battery(cycle_stress_exponent=exponent, initial_soc=0.5)
+        info = b.step(power_frac * b.config.max_charge_kw, dt_h=0.1)
+        return info.cycle_loss / info.throughput_kwh
+
+    # Linear (default exponent=1): equally spaced power fractions give equal
+    # forward differences.
+    r1, r2, r3 = (rate(1.0, pf) for pf in (1 / 3, 2 / 3, 1.0))
+    assert (r2 - r1) == pytest.approx(r3 - r2, rel=1e-6)
+
+    # Quadratic (exponent=2): forward differences strictly increase (convex) --
+    # pushing from 2/3 to full power costs more than 1/3 to 2/3.
+    q1, q2, q3 = (rate(2.0, pf) for pf in (1 / 3, 2 / 3, 1.0))
+    assert (q2 - q1) < (q3 - q2)
+
+
+def test_knee_gain_accelerates_degradation_near_eol():
+    # Same feasible action (unclipped, so throughput_kwh is identical either
+    # way), compared fresh vs right at the EoL threshold.
+    fresh = make_battery(knee_gain=4.0, knee_exponent=3.0)
+    fresh.reset(soc=0.5, soh=1.0)
+    fresh_info = fresh.step(10.0, dt_h=0.1)
+
+    worn = make_battery(knee_gain=4.0, knee_exponent=3.0)
+    worn.reset(soc=0.5, soh=worn.config.eol_soh)
+    worn_info = worn.step(10.0, dt_h=0.1)
+
+    # wear_frac=0 at soh=1.0 (knee_factor=1) vs wear_frac=1 at soh=eol_soh
+    # (knee_factor=1+knee_gain=5). Checked on cycle_loss, which (unlike
+    # calendar_loss) doesn't also depend on soc's fractional increment --
+    # that increment is itself capacity-dependent, so soh_loss only matches
+    # the 5x ratio approximately.
+    assert worn_info.cycle_loss == pytest.approx(fresh_info.cycle_loss * 5.0, rel=1e-9)
+    assert worn_info.soh_loss > fresh_info.soh_loss

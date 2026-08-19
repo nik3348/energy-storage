@@ -9,7 +9,7 @@ Every arm sees exactly --budget-days D of real market history:
           into the replay buffer
 
 The history file is shared across arms (collected on first use); the dyna
-arm refuses to run without a model saved by validate_market_model.py, which
+arm refuses to run without a model saved by results/validate_market_model.py, which
 is what enforces the validation gate. During training, checkpoint selection
 (EvalCallback) uses only the arm's own data source — the real simulator is
 touched exclusively by the final held-out evaluation.
@@ -96,7 +96,7 @@ def main() -> None:
         "--model",
         type=Path,
         default=None,
-        help="gated ensemble from validate_market_model.py; default models/market-model-d{D}-s{seed}.pt",
+        help="gated ensemble from results/validate_market_model.py; default models/market-model-d{D}-s{seed}.pt",
     )
     parser.add_argument(
         "--eval-freq",
@@ -147,7 +147,7 @@ def main() -> None:
         model_path = args.model or Path("models") / f"market-model-d{d}-s{args.seed}.pt"
         if not model_path.exists():
             raise SystemExit(
-                f"{model_path} not found — run validate_market_model.py for this "
+                f"{model_path} not found — run scripts/results/validate_market_model.py for this "
                 "budget/seed first; the dyna arm only trains on a gated model."
             )
         ensemble = MarketModelEnsemble.load(model_path)

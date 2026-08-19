@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Recovery curves and summary table for the adaptation experiment.
 
-Reads the per-day CSVs written by run_adaptation.py for one shift and plots
+Reads the per-day CSVs written by pipeline/run_adaptation_deployments.py for one shift and plots
 capture(t) = 7-day-windowed policy net / rolling-horizon-oracle net on the
 same seed (the oracle re-plans on observed prices, so it adapts instantly —
 capture is "fraction of the instantly-adapted optimum retained"). Prints
@@ -9,7 +9,7 @@ recovery lag (days after T until capture regains 90% of the arm's own
 pre-shift level) and cumulative post-shift regret vs the oracle.
 
 Usage:
-    uv run --extra train python scripts/plot_adaptation.py --shift fuel-step
+    uv run --extra train python scripts/results/plot_adaptation.py --shift fuel-step
 """
 
 import argparse

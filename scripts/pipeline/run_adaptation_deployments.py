@@ -5,7 +5,7 @@ A deployment = one continuous real-market run: --pre-days calm, then a
 persistent shift at day T = pre-days that lasts to the end of the run. Arms
 sharing a --seed0 see identical markets (prices are exogenous), so runs are
 paired; the oracle arm is the instant-adaptation normalizer that
-plot_adaptation.py divides every capture curve by — run it for the same
+results/plot_adaptation.py divides every capture curve by — run it for the same
 seeds as every other arm.
 
 Writes one CSV per seed to {out}/{shift}/{arm}-s{seed}.csv with per-day
@@ -14,8 +14,8 @@ disagreement, adapted flag). wandb is off by default here — the CSVs are
 the source of truth and runs are many and small; pass --wandb to log too.
 
 Usage:
-    uv run --extra train python scripts/run_adaptation.py --shift fuel-step --arm oracle --seeds 10
-    uv run --extra train python scripts/run_adaptation.py --shift fuel-step --arm adaptive-dyna --seeds 10
+    uv run --extra train python scripts/pipeline/run_adaptation_deployments.py --shift fuel-step --arm oracle --seeds 10
+    uv run --extra train python scripts/pipeline/run_adaptation_deployments.py --shift fuel-step --arm adaptive-dyna --seeds 10
 """
 
 import argparse

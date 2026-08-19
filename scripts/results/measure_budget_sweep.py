@@ -1,17 +1,15 @@
 #!/usr/bin/env python
-"""Re-evaluate every budget-sweep checkpoint with error margins, and write the
-numbers the headline RQ1 figure plots.
+"""Score every budget-sweep checkpoint against the reference policies, with
+error margins, and write results/budget_sweep.json.
 
-plot_dyna_results.py previously hardcoded the sweep percentages from the
-original training run, which meant the figure could drift silently away from
-the tables. This script re-scores the stored checkpoints on the same paired
-held-out episodes used everywhere else and writes results/budget_sweep.json,
-which the plot script then reads. Capture is the pooled fraction of the
+Doubles as the benchmark ladder: run with no checkpoints trained yet and it
+still reports the oracle, heuristic, and idle rows, skipping every learned
+arm whose checkpoint is missing. Capture is the pooled fraction of the
 per-episode hindsight optimum, with a leave-one-episode-out jackknife std
 (energy_storage.baselines.capture_jackknife).
 
 Usage:
-    uv run --extra train python scripts/measure_budget_sweep.py
+    uv run --extra train python scripts/results/measure_budget_sweep.py
 """
 
 import argparse
@@ -49,15 +47,19 @@ def main() -> None:
     print(f"hindsight net ${hindsight['net']:.2f}±{hindsight['net_std']:.2f}/episode = 100%\n")
 
     # The three budget-swept arms, plus the fixed reference lines the figure draws.
-    arms: dict[str, Path | None] = {}
+    # Any checkpoint not yet trained is skipped rather than failing outright, so
+    # this also works as a no-training smoke test of the reference policies.
+    arms: dict[str, Path] = {}
     for budget in BUDGETS:
         for arm in ("online", "replay", "dyna"):
             path = args.models / "dyna" / f"{arm}-d{budget}-s0" / args.checkpoint
             if path.exists():
                 arms[f"{arm}-d{budget}"] = path
-    references = {
-        "unlimited-data": args.models / "sac-year-v3" / args.checkpoint,
-    }
+    unlimited = args.models / "sac-year-v3" / args.checkpoint
+    if unlimited.exists():
+        arms["unlimited-data"] = unlimited
+    else:
+        print(f"skipping unlimited-data: no checkpoint at {unlimited}")
 
     out: dict[str, dict] = {
         "episodes": args.episodes,
@@ -92,7 +94,7 @@ def main() -> None:
             f"{100 * capture:>17.1f}±{100 * std:<4.1f}%"
         )
 
-    for name, path in {**arms, **references}.items():
+    for name, path in arms.items():
         score(name, model_policy(SAC.load(path)))
     score("rolling-oracle", RollingHorizonOracle())
     score("heuristic", heuristic_policy)

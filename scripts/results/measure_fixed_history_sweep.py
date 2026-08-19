@@ -3,7 +3,8 @@
 survive re-running the training, with the real-data draw held fixed?
 
 Every checkpoint here was trained on seed 0's 365 stored days and seed 0's
-gated ensemble (scripts/run_fixed_history_sweep.sh), so the seed indexes the
+gated ensemble (each arm re-run under pipeline/train_dyna_arms.py with --history and
+--model pinned to seed 0 but --seed varied), so the seed indexes the
 training run only. Each arm is scored on the same 20 paired held-out episodes
 as everywhere else, which makes two error margins meaningful and distinct:
 
@@ -17,7 +18,7 @@ training seed, same 20 episodes), whose standard error cancels the market-week
 variance that dominates both marginal numbers.
 
 Usage:
-    uv run --extra train python scripts/measure_fixed_history_sweep.py
+    uv run --extra train python scripts/results/measure_fixed_history_sweep.py
 """
 
 import argparse
